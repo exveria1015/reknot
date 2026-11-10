@@ -251,6 +251,13 @@ fn installed_git_cli_generates_a_portable_static_and_native_application() {
             .current_dir(&project)
             .arg("generate-lockfile"),
     );
+    // Resolution can select crates newer than the SDK snapshot's lockfile.
+    // Fetch this application's complete graph before checking offline runs.
+    checked(
+        Command::new("cargo")
+            .current_dir(&project)
+            .args(["fetch", "--locked"]),
+    );
     let schema = checked(Command::new("cargo").current_dir(&project).args([
         "run",
         "-p",
