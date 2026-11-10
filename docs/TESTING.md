@@ -5,7 +5,7 @@ English | [日本語](../docs_ja/TESTING.md)
 ## Typed handlers
 
 ```sh
-cargo test -p reknot --no-default-features --features typed --test typed_handlers --test typed_services --test typed_bridge --locked
+cargo test -p reknot --no-default-features --features typed --test typed_handlers --test typed_services --test typed_bridge --test typed_contracts --test typed_restart --locked
 cargo test -p reknot --test native_typed --locked -- --ignored --test-threads=1
 cargo test -p reknot --test scaffold --locked -- --include-ignored
 cargo test -p typed_bot_host --no-default-features --features static-logic --locked
@@ -24,7 +24,12 @@ in static and native configurations, then saves edits while running to check cut
 Package checks repeat the same generation and execution test from extracted archives.
 The 1 MiB boundaries are checked in ordinary runs; Miri uses small inputs to check ownership and FFI paths.
 The Miri script includes `typed-handlers`, `typed-services` and `typed-bridge` under both borrow models.
-These tests do not verify automatic struct compatibility, framework-specific SDK connections, automatic DLL reclamation or guaranteed OS notification delivery.
+Contract tests check both Serde directions, field changes under unchanged type names/versions, source locations and bounded diagnostics.
+Typed Restart tests cover migration, final commit, failed/interrupted recovery, child join, queue wakeup and reentrant Drop.
+Real DLLs also exercise automatic Restart and explicit state migration. The CLI is installed from an isolated Git snapshot,
+then generates a Git-dependent application that exports its schema and runs in native/static modes.
+Miri includes `abi-metadata`, `typed-contracts` and `typed-restart`, including reading an actual shorter ABI 5 table.
+These tests do not prove semantic compatibility, framework-specific SDK connections, automatic DLL reclamation or guaranteed OS notification delivery.
 
 ## What each test covers
 

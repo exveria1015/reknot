@@ -146,18 +146,19 @@ fn main() {
     Invoke-CheckedCargo (@(
         'test', '--manifest-path', $taskManifest, '-p', 'reknot', '--no-default-features',
         '--features', 'typed', '--test', 'typed_handlers', '--test', 'typed_services',
-        '--test', 'typed_bridge', '--test', 'scaffold', '--locked'
+        '--test', 'typed_bridge', '--test', 'typed_contracts', '--test', 'typed_restart', '--test', 'scaffold', '--locked'
     ) + $taskResolution)
+    $taskScaffoldFilter = if ($Offline) { @('--', 'generated_workspace_builds_static_and_native_and_keeps_host_state', '--exact', '--ignored', '--test-threads=1') } else { @('--', '--ignored', '--test-threads=1') }
     Invoke-CheckedCargo (@(
         'test', '--manifest-path', $taskManifest, '-p', 'reknot', '--test', 'scaffold', '--locked'
-    ) + $taskResolution + @('--', '--ignored', '--test-threads=1'))
+    ) + $taskResolution + $taskScaffoldFilter)
     Invoke-CheckedCargo (@(
         'run', '--manifest-path', $taskManifest, '-p', 'package_consumer', '--locked'
     ) + $taskResolution)
     @{
         archives = $taskArchives
         extracted_workspace = $taskStage
-        checks = @('all-targets/all-features', 'all-targets/no-default-features', 'standalone ABI DLL', 'explicit native reclamation', 'managed generation cleanup', 'typed handlers/services/bridge', 'generated static and native project', 'static consumer')
+        checks = @('all-targets/all-features', 'all-targets/no-default-features', 'standalone ABI DLL', 'explicit native reclamation', 'managed generation cleanup', 'typed handlers/services/bridge/contracts/restart', 'generated static and native project', 'static consumer')
     } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $taskStage 'result.json') -Encoding utf8
     Write-Host "Verified extracted SDK packages and consumer: $taskStage"
 } finally {

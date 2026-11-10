@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 pub const REPLY: Handler<Message, Result<String, String>> = Handler::new("{{package}}.reply", 1);
 
 // Bump the handler contract version and restart the host after wire/meaning changes.
+#[reknot::schema]
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Message {

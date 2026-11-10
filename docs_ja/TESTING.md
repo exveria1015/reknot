@@ -5,7 +5,7 @@
 ## 型付きハンドラー
 
 ```sh
-cargo test -p reknot --no-default-features --features typed --test typed_handlers --test typed_services --test typed_bridge --locked
+cargo test -p reknot --no-default-features --features typed --test typed_handlers --test typed_services --test typed_bridge --test typed_contracts --test typed_restart --locked
 cargo test -p reknot --test native_typed --locked -- --ignored --test-threads=1
 cargo test -p reknot --test scaffold --locked -- --include-ignored
 cargo test -p typed_bot_host --no-default-features --features static-logic --locked
@@ -24,7 +24,12 @@ panicの報告、子処理・キャンセル後の終了待ちを検査します
 配布物検査でも展開済みアーカイブから同じ生成・実行試験を行います。
 1MiBのサイズ境界は通常実行で検査し、Miriでは小さい入力で所有・FFIの経路を検査します。
 Miriスクリプトにも両借用モデルの `typed-handlers` / `typed-services` / `typed-bridge` を追加しています。
-構造体の自動互換性判定、フレームワーク固有のSDK接続、DLL自動回収、OS通知の配達保証を検証するものではありません。
+契約試験は Serde 両方向、型名・版を変えないフィールド変更、ソース位置、診断のサイズ制限を確認します。
+型付き Restart は移行・最終 commit・失敗と中断からの復旧・子処理の join・キューの通知・再入中の Drop を検査します。
+実 DLL でも自動 Restart と明示的な状態移行を行います。隔離した Git スナップショットから CLI をインストールし、
+Git 依存のアプリを生成して、スキーマ出力と native/static 起動を検査します。
+Miri には `abi-metadata`・`typed-contracts`・`typed-restart` を含め、実際に短い ABI 5 テーブルの読み取りも検査します。
+意味の互換性、フレームワーク固有の SDK 接続、DLL 自動回収、OS 通知の配達保証を証明するものではありません。
 
 ## テストの役割
 

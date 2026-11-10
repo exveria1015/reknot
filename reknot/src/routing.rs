@@ -18,7 +18,7 @@ use std::task::{Context, Poll};
 
 mod control;
 mod limits;
-mod restart;
+pub(crate) mod restart;
 pub use control::Checkpoint;
 use control::Control;
 pub use limits::{GenerationBudget, RouterOptions};
@@ -39,6 +39,10 @@ pub enum RouteError {
         found: ServiceKey,
     },
     InitData(ServiceError),
+    InitDiagnostic {
+        error: ServiceError,
+        metadata: Vec<u8>,
+    },
     HostCommit(ServiceError),
     #[cfg(feature = "native")]
     Load(LoadError),
@@ -89,6 +93,10 @@ impl fmt::Display for RouteError {
                 "initialization schema mismatch: expected {expected:?}, found {found:?}"
             ),
             Self::InitData(error) => write!(f, "initialization data rejected: {error}"),
+            Self::InitDiagnostic { error, .. } => write!(
+                f,
+                "initialization data rejected: {error} (candidate metadata available)"
+            ),
             Self::HostCommit(error) => write!(f, "host resource commit failed: {error}"),
             #[cfg(feature = "native")]
             Self::Load(error) => write!(f, "handler load failed: {error}"),
@@ -835,7 +843,7 @@ pub fn poll_cancelled_requests(cx: &mut Context<'_>) -> Poll<()> {
 pub(crate) fn validate(api: HandlerApi) -> Result<(), RouteError> {
     let header = api.header;
     if header.abi_version != HANDLER_ABI_VERSION
-        || header.struct_size < std::mem::size_of::<HandlerApi>() as u32
+        || header.struct_size < reknot_abi::services::HANDLER_API_V5_SIZE as u32
     {
         return Err(RouteError::Abi {
             version: header.abi_version,

@@ -30,3 +30,30 @@ pub fn handler(attr: TokenStream, item: TokenStream) -> TokenStream {
 pub fn export_handlers(input: TokenStream) -> TokenStream {
     typed::export(parse_macro_input!(input as typed::Export)).into()
 }
+
+/// Derives the typed contract's JSON Schema, respecting supported Serde attributes.
+/// Apply alongside Serialize/Deserialize to a struct or enum. Custom Serde codecs
+/// need an accurate `#[schemars(with = "...")]` or manual JsonSchema implementation.
+#[proc_macro_attribute]
+pub fn schema(attr: TokenStream, item: TokenStream) -> TokenStream {
+    if !attr.is_empty() {
+        return syn::Error::new(
+            proc_macro2::Span::call_site(),
+            "schema takes no arguments; use #[schemars(...)] for schema options",
+        )
+        .to_compile_error()
+        .into();
+    }
+    let input = parse_macro_input!(item as syn::DeriveInput);
+    if matches!(input.data, syn::Data::Union(_)) {
+        return syn::Error::new_spanned(input, "schema supports structs and enums")
+            .to_compile_error()
+            .into();
+    }
+    quote::quote! {
+        #[derive(::reknot::typed::JsonSchema)]
+        #[schemars(crate = "::reknot::typed::schemars")]
+        #input
+    }
+    .into()
+}

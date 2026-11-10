@@ -20,6 +20,10 @@ Then check the host log:
 | `Source changed during the build` | A newer edit superseded the candidate. Wait for the next build result |
 | `load-attempt budget reached` | Restart the development host. Reclaiming DLLs does not refund consumed attempts |
 
+`Error::Contract` reports the comparison stage, handler, JSON pointer, expected/actual values and available source location.
+For example, `/input_schema/deserialize/properties/value/type` identifies the field format.
+Inspect `report.expected` and `report.candidate` for full manifests; see [contract diagnostics](CONTRACTS_AND_SCHEMAS.md).
+
 `New events use generation ...` confirms activation.
 See [watched inputs](DEVELOPMENT.md#watched-source-inputs) for files outside the watch set and newly created `.cargo` directories.
 

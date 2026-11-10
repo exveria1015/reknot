@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 pub const REPLY: Handler<Message, Result<String, String>> = Handler::new("bot.reply", 1);
 pub const SUMMARY: Handler<Vec<String>, Result<String, String>> = Handler::new("bot.summary", 1);
 
+#[reknot::schema]
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Message {

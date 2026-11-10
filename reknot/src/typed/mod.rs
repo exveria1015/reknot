@@ -4,7 +4,9 @@
 //! ordinary functions with [`crate::handler`], and export a single module with
 //! [`crate::export_handlers`]. Only owned JSON bytes cross the native boundary.
 //! Contract versions describe wire format **and meaning**: increment them when
-//! changing either. Rust type names are an extra diagnostic, not schema inference.
+//! changing either. [`crate::schema`] derives structural JSON schemas; both Serde
+//! directions are compared before activation. Equal schemas do not prove equal
+//! behavior, so semantic changes still need explicit contract-version updates.
 //!
 //! The declared contract checks a function's Rust signature at compile time:
 //! ```compile_fail
@@ -25,6 +27,14 @@
 //! fn require_send<T: Send>() {}
 //! require_send::<reknot::typed::HandlerHandle<String, String>>();
 //! ```
+mod schema;
+pub use schema::{
+    ContractDifference, ContractReport, ExportedModule, SourceLocation, StateSpec, TypeSchema,
+    WorkerState,
+};
+pub use schemars::{self, JsonSchema};
+mod restart;
+pub use restart::{ModuleRestart, StateMigration};
 mod runtime;
 pub use runtime::{Call, HandlerHandle, ModuleBuilder, ModuleHost};
 mod bridge;
@@ -34,7 +44,7 @@ pub use bridge::{
 #[cfg(feature = "dev-tools")]
 mod development;
 #[cfg(feature = "dev-tools")]
-pub use development::{DevModule, DevOptions, ReloadEvent};
+pub use development::{DevModule, DevOptions, ReloadEvent, ReloadMode};
 
 use crate::{RouteError, ServiceKey};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -59,6 +69,9 @@ impl<I, O> Clone for Handler<I, O> {
     }
 }
 impl<I, O> Handler<I, O> {
+    pub fn key(self) -> u64 {
+        key(self.name)
+    }
     pub const fn new(name: &'static str, version: u32) -> Self {
         Self {
             name,
@@ -67,8 +80,10 @@ impl<I, O> Handler<I, O> {
         }
     }
 }
-impl<I: Serialize + DeserializeOwned + 'static, O: Serialize + DeserializeOwned + 'static>
-    Handler<I, O>
+impl<
+        I: Serialize + DeserializeOwned + JsonSchema + 'static,
+        O: Serialize + DeserializeOwned + JsonSchema + 'static,
+    > Handler<I, O>
 {
     pub fn descriptor(self) -> HandlerSpec {
         HandlerSpec {
@@ -76,20 +91,46 @@ impl<I: Serialize + DeserializeOwned + 'static, O: Serialize + DeserializeOwned 
             version: self.version,
             input: std::any::type_name::<I>().into(),
             output: std::any::type_name::<O>().into(),
+            input_schema: TypeSchema::of::<I>(),
+            output_schema: TypeSchema::of::<O>(),
+            source: None,
         }
     }
 }
 
 /// Serializable contract metadata; function names and display labels are not IDs.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HandlerSpec {
     pub name: String,
     pub version: u32,
     pub input: String,
     pub output: String,
+    pub input_schema: TypeSchema,
+    pub output_schema: TypeSchema,
+    pub source: Option<SourceLocation>,
 }
+impl PartialEq for HandlerSpec {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+            && self.version == other.version
+            && self.input == other.input
+            && self.output == other.output
+            && self.input_schema == other.input_schema
+            && self.output_schema == other.output_schema
+    }
+}
+impl Eq for HandlerSpec {}
 impl HandlerSpec {
+    pub fn at_source(mut self, file: &str, line: u32, column: u32, function: &str) -> Self {
+        self.source = Some(SourceLocation {
+            file: file.into(),
+            line,
+            column,
+            function: function.into(),
+        });
+        self
+    }
     pub fn key(&self) -> u64 {
         key(&self.name)
     }
@@ -102,6 +143,7 @@ pub struct Module {
     pub name: String,
     pub version: u32,
     handlers: Vec<HandlerSpec>,
+    pub state: Option<StateSpec>,
 }
 impl Module {
     pub fn new(name: impl Into<String>, version: u32) -> Self {
@@ -109,15 +151,37 @@ impl Module {
             name: name.into(),
             version,
             handlers: Vec::new(),
+            state: None,
         }
     }
     pub fn with<I, O>(mut self, handler: Handler<I, O>) -> Self
     where
-        I: Serialize + DeserializeOwned + 'static,
-        O: Serialize + DeserializeOwned + 'static,
+        I: Serialize + DeserializeOwned + JsonSchema + 'static,
+        O: Serialize + DeserializeOwned + JsonSchema + 'static,
     {
         self.handlers.push(handler.descriptor());
         self
+    }
+    pub fn with_state<S: Serialize + DeserializeOwned + JsonSchema + 'static>(
+        mut self,
+        state: WorkerState<S>,
+    ) -> Self {
+        self.state = Some(state.descriptor());
+        self
+    }
+    pub fn state_key(&self) -> ServiceKey {
+        self.state
+            .as_ref()
+            .map(StateSpec::key)
+            .unwrap_or(ServiceKey::new(0, 0))
+    }
+    pub fn schema_json(&self) -> Result<String, Error> {
+        self.validate()?;
+        encode(self, crate::MAX_INIT_BYTES)?;
+        serde_json::to_string_pretty(
+            &serde_json::json!({"format": "reknot-typed-contract-v2", "module": self}),
+        )
+        .map_err(|e| Error::Codec(e.to_string()))
     }
     pub fn handlers(&self) -> &[HandlerSpec] {
         &self.handlers
@@ -130,6 +194,15 @@ impl Module {
         {
             return Err(Error::Configuration(
                 "use a nonempty module name, positive version and 1..=64 handlers".into(),
+            ));
+        }
+        if self
+            .state
+            .as_ref()
+            .is_some_and(|s| !valid_name(&s.name) || s.version == 0 || s.key().id == 0)
+        {
+            return Err(Error::Configuration(
+                "worker state needs a nonempty name and positive version".into(),
             ));
         }
         for (index, handler) in self.handlers.iter().enumerate() {
@@ -167,11 +240,14 @@ fn key(name: &str) -> u64 {
 pub enum Error {
     Configuration(String),
     Contract {
-        module: String,
-        expected: Vec<HandlerSpec>,
+        report: Box<ContractReport>,
         source: RouteError,
     },
     Route(RouteError),
+    Restart {
+        source: RouteError,
+        detail: Option<String>,
+    },
     Codec(String),
     TooLarge {
         limit: usize,
@@ -190,13 +266,14 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Configuration(message) | Self::Development(message) => f.write_str(message),
-            Self::Contract { module, expected, source } => {
-                write!(f, "module {module} rejected: {source}. Expected")?;
-                for handler in expected { write!(f, " {} v{} ({} -> {});", handler.name, handler.version, handler.input, handler.output)?; }
-                write!(f, " check export_handlers and shared protocol versions; restart the host after a protocol change")
-            }
+            Self::Contract { report, source } => write!(f, "{report}\nUnderlying error: {source}"),
             Self::Route(RouteError::GenerationLimit { limit }) => write!(f, "load-attempt budget reached ({limit}); restart the development host (DLL reclamation does not refund attempts)"),
             Self::Route(error) => fmt::Display::fmt(error, f),
+            Self::Restart { source, detail } => {
+                write!(f, "restart failed; admission remains paused: {source}")?;
+                if let Some(detail) = detail { write!(f, ": {detail}")?; }
+                Ok(())
+            },
             Self::Codec(error) => write!(f, "typed message conversion failed: {error}"),
             Self::TooLarge { limit } => write!(f, "encoded message exceeds {limit} bytes"),
             Self::Busy => write!(f, "module is busy or its in-flight request limit was reached; try a later event"),
@@ -210,7 +287,9 @@ impl fmt::Display for Error {
 impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Route(source) | Self::Contract { source, .. } => Some(source),
+            Self::Route(source) | Self::Contract { source, .. } | Self::Restart { source, .. } => {
+                Some(source)
+            }
             _ => None,
         }
     }
@@ -221,15 +300,23 @@ impl From<RouteError> for Error {
     }
 }
 fn route_error(module: &Module, source: RouteError) -> Error {
+    let candidate = match &source {
+        RouteError::InitDiagnostic { metadata, .. } => {
+            serde_json::from_slice::<ExportedModule>(metadata)
+                .ok()
+                .filter(|m| m.format_version == 1)
+        }
+        _ => None,
+    };
     if matches!(
         source,
         RouteError::InitData(_)
+            | RouteError::InitDiagnostic { .. }
             | RouteError::InitSchemaMismatch { .. }
             | RouteError::ContractMismatch { .. }
     ) {
         Error::Contract {
-            module: module.name.clone(),
-            expected: module.handlers.clone(),
+            report: Box::new(ContractReport::new(module, candidate)),
             source,
         }
     } else {
@@ -278,7 +365,7 @@ pub mod __private {
     use std::future::Future;
     use std::pin::Pin;
     pub const SERVICE: ServiceKey = ServiceKey::new(0x464c_4f57_5459_5045, 1);
-    pub const SCHEMA: ServiceKey = ServiceKey::new(0x464c_4f57_4d4f_4455, 1);
+    pub const SCHEMA: ServiceKey = ServiceKey::new(0x464c_4f57_4d4f_4455, 2);
     pub type HandlerFuture = Pin<Box<dyn Future<Output = Result<(), ServiceError>>>>;
 
     /// # Safety
@@ -313,6 +400,30 @@ pub mod __private {
         .unwrap_or(ServiceError::PANICKED.0)
     }
     /// # Safety
+    /// output is writable for capacity bytes. The manifest factory is pure.
+    pub unsafe fn describe(
+        output: *mut u8,
+        capacity: usize,
+        manifest: impl FnOnce() -> (Module, Vec<HandlerSpec>),
+    ) -> usize {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let (module, handlers) = manifest();
+            let metadata = ExportedModule {
+                format_version: 1,
+                module,
+                handlers,
+            };
+            let Ok(bytes) = encode(&metadata, crate::MAX_INIT_BYTES) else {
+                return usize::MAX;
+            };
+            if bytes.len() <= capacity && !output.is_null() {
+                std::ptr::copy_nonoverlapping(bytes.as_ptr(), output, bytes.len());
+            }
+            bytes.len()
+        }))
+        .unwrap_or(usize::MAX)
+    }
+    /// # Safety
     /// Same readable descriptor and ownership contract as `RequestContext::from_raw`.
     pub unsafe fn make(
         raw: *const crate::HandlerRequest,
@@ -343,8 +454,8 @@ pub mod __private {
         call: impl FnOnce(RequestContext, I) -> F,
     ) -> Result<(), ServiceError>
     where
-        I: Serialize + DeserializeOwned + 'static,
-        O: Serialize + DeserializeOwned + 'static,
+        I: Serialize + DeserializeOwned + JsonSchema + 'static,
+        O: Serialize + DeserializeOwned + JsonSchema + 'static,
         F: Future<Output = O>,
     {
         let services = context.services().clone();

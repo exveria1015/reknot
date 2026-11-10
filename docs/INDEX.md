@@ -20,8 +20,11 @@ Use this index to find a topic when you need it during implementation or develop
 - [Async services and threads](ASYNC_SERVICES_AND_THREADS.md) — Await host I/O, cancel operations and notify across threads.
 - [Service contracts and typed initialization](SERVICE_CONTRACTS_AND_INIT.md) — Declare required services and pass per-generation configuration.
 
+- [Contract diagnostics and schemas](CONTRACTS_AND_SCHEMAS.md) — Derive schemas, inspect structural differences and export contracts.
+
 ## Preserve state and finish work
 
+- [Typed Restart](TYPED_RESTART.md) — Register typed workers, migrate state and recover after interruption.
 - [Restart and state migration](RESTART_AND_MIGRATION.md) — Cooperatively stop registered workers, migrate checkpoints and recreate them.
 - [Host resource and database migration](HOST_RESOURCE_MIGRATION.md) — Coordinate SQLite and cache access, commit hooks and recovery.
 - [Managed children and external callbacks](MANAGED_ACTIVITIES.md) — Register child work, request cancellation and wait for it to finish.

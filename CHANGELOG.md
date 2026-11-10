@@ -6,7 +6,39 @@ tags and their verification records. A version entry alone does not announce pub
 
 ## Unreleased
 
-No changes recorded after the first release candidate.
+## 0.1.0-rc.2
+
+Source candidate for the higher-level API improvements; publication is separate.
+
+### Breaking typed API changes
+
+- Inputs, outputs and worker state now require `JsonSchema`. Add `#[reknot::schema]`
+  to Serde protocol types, then rebuild host and logic together. Typed initialization
+  uses contract v2; an rc.1 typed module is rejected. `Error::Contract` now contains
+  a structured report.
+- Both serialization and deserialization schemas are compared before activation,
+  so field/Serde differences under the same Rust type name and version are detected.
+  Schema equality is conservative and does not establish semantic compatibility.
+
+### Capabilities
+
+- Contract errors identify expected/actual values, JSON pointer, handler and source
+  location, with bounded differences and full copied manifests for inspection.
+- `#[reknot::schema]`, `TypeSchema` and `Module::schema_json()` generate/export JSON
+  Schema 2020-12 contracts. Generated projects include a schema export example.
+- `WorkerState`, `StateMigration` and `ModuleRestart` expose cooperative Restart,
+  typed checkpoint migration and a final host commit through `ModuleHost`.
+  Ordinary requests are not replayed; failure/interruption keeps admission paused.
+  Queued bridge calls wait for admission and wake on recovery or successful cutover.
+- `DevOptions::with_reload_mode(ReloadMode::Restart)` opts into save-time Restart
+  for unchanged state contracts. Drain remains the default.
+- `reknot-new` generates exact registry dependencies by default and supports a fixed
+  Git revision or explicit local path. Source candidates can install the CLI and
+  generate native/static applications from Git without keeping an SDK checkout.
+- Handler ABI 5 retains its original prefix and gains an optional metadata tail.
+  Legacy tables are read within their declared size. Miri, real-DLL evolution,
+  installed-CLI and extracted-package tests cover the new paths.
+
 
 ## 0.1.0-rc.1
 

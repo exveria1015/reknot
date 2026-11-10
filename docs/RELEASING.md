@@ -2,8 +2,8 @@
 
 English | [日本語](../docs_ja/RELEASING.md)
 
-The first Reknot candidate is a **source RC**, `v0.1.0-rc.1`. The `reknot`,
-`reknot_abi` and `reknot_macros` crate versions are `0.1.0-rc.1`; internal registry
+The current Reknot candidate is a **source RC**, `v0.1.0-rc.2`. The `reknot`,
+`reknot_abi` and `reknot_macros` crate versions are `0.1.0-rc.2`; internal registry
 requirements use that exact version. Examples and generated application versions
 are independent of the SDK version. A source RC does not publish crates to crates.io.
 
@@ -45,8 +45,8 @@ or repository name. Keep local logs outside the source tree committed to Git.
 
 ## Prepare and publish the source RC
 
-Prepare a GitHub **draft prerelease** with title `Reknot v0.1.0-rc.1`, tag
-`v0.1.0-rc.1` and the verified full commit SHA as its target. Include:
+Prepare a GitHub **draft prerelease** with title `Reknot v0.1.0-rc.2`, tag
+`v0.1.0-rc.2` and the verified full commit SHA as its target. Include:
 
 - The source SHA and the exact successful CI run URL.
 - The crate and command rename, typed API, bridge and generator highlights.
@@ -60,21 +60,22 @@ it resolves to the verified commit. Use a new version for subsequent fixes.
 The following commands are for an already published candidate:
 
 ```sh
-git clone --branch v0.1.0-rc.1 --depth 1 https://github.com/exveria1015/reknot.git
+git clone --branch v0.1.0-rc.2 --depth 1 https://github.com/exveria1015/reknot.git
 cd reknot
 cargo run -p typed_bot_host --locked
 ```
 
-Keep this checkout when using `reknot-new`: generated projects refer to its SDK
-sources by path. `cargo install` or a source-free generator is not a supported
-installation route for this RC. See [typed handlers](TYPED_HANDLERS.md).
+The installed `reknot-new` can use a fixed Git commit without retaining this checkout.
+Use the same verified full SHA for `cargo install --git ... --rev SHA` and `reknot-new PATH --sdk-rev SHA`.
+The default registry route requires separate crates.io publication. See [typed handlers](TYPED_HANDLERS.md).
 
 ## State the limits
 
 Reknot targets trusted Rust logic during local development. Build host and logic
 together against the same SDK and compatible target/toolchain. The typed API
-supports one DLL and Drain; low-level Restart is separate. Contract-version changes
-require rebuilding/restarting the host as documented.
+supports one DLL, Drain and explicit worker Restart. Typed contracts use format v2 and require `JsonSchema`;
+add `#[reknot::schema]` to protocol types and rebuild both host and logic when upgrading from rc.1.
+Handler input/output contract changes require rebuilding/restarting the host; worker state changes use explicit migration.
 
 Images stay loaded by default, and the default budget is 32 cumulative load
 attempts, including failed native loads. Explicit unsafe reclamation needs the

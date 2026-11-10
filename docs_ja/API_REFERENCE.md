@@ -27,15 +27,16 @@ logic の `[lib] crate-type` はネイティブなら `["cdylib"]`、静的リ�
 
 ### 契約の照合と入出力
 
-候補の検査では、モジュール名・版、ハンドラー名・版、入出力の Rust 型名、実際の export 一覧を照合します。
+候補の検査では、モジュール名・版、ハンドラー名・版、入出力の Rust 型名、Serde 両方向の生成スキーマ、状態の契約、実際の export 一覧を照合します。
 一覧の順序は問いません。重複キーと検出できるハッシュ衝突は登録エラーになります。
 識別名は Rust の関数名から自動生成せず、権限の付与にも使いません。
 
-型名の一致は、フィールド・Serde 属性・形式・意味の互換性を保証しません。
+プロトコルの型に `#[reknot::schema]` を付けます。構造が異なる場合、`Error::Contract { report, source }` に期待値・実値、JSON ポインター、ハンドラーのソース位置を記録します。
+スキーマの一致は意味の互換性を保証しません。[契約エラー](CONTRACTS_AND_SCHEMAS.md) を参照してください。
 それらを変更したら対応する契約の版を上げ、ホストも再ビルド・再起動します。
 ハンドラーの追加・削除も、ホストとロジックで共有する宣言の更新が必要です。
 
-入出力は `Serialize + DeserializeOwned + 'static` を満たす、所有する値です。
+入出力は `Serialize + DeserializeOwned + JsonSchema + 'static` を満たす、所有する値です。
 複数の引数は構造体やタプルにまとめ、値が不要な場合は `()` を使います。
 借用した SDK オブジェクト、`&self`、ジェネリック関数は対象外です。
 
@@ -106,7 +107,12 @@ Tokio では所有側を `current_thread` または `LocalSet` で動かしま�
 子処理は `spawn_child` / `register_activity` の既存契約に従って登録します。
 
 監視とビルドの条件は [開発時の運用](DEVELOPMENT.md)、ネイティブコードの寿命は [DLL の寿命](UNLOAD_SAFETY.md) を参照してください。
-型付き API が対象とするのは単一モジュールの Drain です。複数 DLL の一括更新、構造からの互換性推論、Restart の高レイヤー化は未提供です。
+型付き API は単一モジュールの Drain と [型付き Restart](TYPED_RESTART.md) に対応します。チェックポイントは `WorkerState<S>` で定義し、
+`start_worker`、`poll_workers`、`stop_worker`、`remove_worker`、`worker_status`、`worker_error`、`worker_checkpoint` で登録ルートを管理します。
+`restart` / `restart_api` は状態を維持し、`restart_with` / `restart_api_with` は明示的な `StateMigration` を受け取ります。
+`ModuleRestart` は所有スレッドで進める Future です。失敗・中断時は受付停止を維持し、`resume()` で明示的に復旧します。
+`DevOptions::with_reload_mode(ReloadMode::Restart)` で、状態契約を変えない自動 Restart を選べます。
+`Module::schema_json()` は契約全体を出力します。複数 DLL の一括更新は対象外です。
 
 ## メッセージ API
 

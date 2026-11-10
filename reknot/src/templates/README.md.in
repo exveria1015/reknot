@@ -37,7 +37,7 @@ A failed build leaves the running logic in place. Fix the error and save to retr
 | [host/src/main.rs](host/src/main.rs) | Connections, persistent state, event registration and the update loop |
 
 When input/output formats or meanings change, increment the corresponding contract version and rebuild/restart the host too.
-The SDK does not automatically infer compatibility when fields change under the same type name.
+Add `#[reknot::schema]` to protocol types. The SDK compares their generated structural schemas before activation, including changes under the same type name. Equal schemas do not prove equal semantics.
 Adding or removing handlers, or changing the host, also requires a host rebuild and restart.
 
 ### Connect to a framework
@@ -61,10 +61,16 @@ Static linking builds the logic together with the host. Rebuild and restart the 
 cargo run --no-default-features --features static-logic --locked
 ```
 
-### SDK source path and load limit
+### SDK source, schema export and load limit
 
-[Cargo.toml](Cargo.toml) points to the local SDK source used to generate this project.
-If you move the SDK, update `workspace.dependencies.reknot.path` too.
+[Cargo.toml](Cargo.toml) records the selected SDK source: an exact registry version, Git commit or explicit local path.
+Only path dependencies need a retained SDK checkout. Export the protocol schema with:
+
+```sh
+cargo run -p {{package}}-protocol --example schema
+```
+
+The generated host defaults to Drain. See the [typed Restart guide](https://github.com/exveria1015/reknot/blob/main/docs/TYPED_RESTART.md) for persistent workers.
 
 Native DLLs remain loaded by default. The default limit is 32 cumulative load attempts, including failed native loads.
 Restart the development host when the limit is reached. DLL reclamation does not refund consumed slots.
@@ -104,7 +110,7 @@ cargo run
 | [host/src/main.rs](host/src/main.rs) | 接続、継続する状態、イベント登録、更新を進めるループ |
 
 入力・戻り値の形式や意味を変えたら、対応する契約の版を上げ、ホストも再ビルド・再起動してください。
-同じ型名のまま行われたフィールド変更を、自動で互換性判定する機能はありません。
+プロトコルの型に `#[reknot::schema]` を付けます。同じ型名のままの構造変更も、適用前に生成スキーマで検出します。意味の一致までは証明しません。
 ハンドラーの追加・削除やホストの変更も、ホストの再ビルド・再起動が必要です。
 
 ### フレームワークとつなぐ
@@ -128,10 +134,16 @@ cargo run
 cargo run --no-default-features --features static-logic --locked
 ```
 
-### SDK の参照先とロード上限
+### SDK の参照先・スキーマ出力・ロード上限
 
-[Cargo.toml](Cargo.toml) は、生成に使った SDK のローカルソースを参照します。
-SDK を移動した場合は `workspace.dependencies.reknot.path` も変更してください。
+[Cargo.toml](Cargo.toml) は、選んだ SDK の参照元（レジストリの固定版・Git の固定コミット・明示したローカルパス）を記録します。
+SDK のチェックアウトを保持する必要があるのは path 依存の場合だけです。プロトコルのスキーマは次のコマンドで出力できます。
+
+```sh
+cargo run -p {{package}}-protocol --example schema
+```
+
+生成したホストの既定は Drain です。常駐ワーカーには [型付き Restart](https://github.com/exveria1015/reknot/blob/main/docs_ja/TYPED_RESTART.md) を利用できます。
 
 ネイティブ構成の DLL は既定で保持されます。累積ロード試行の上限は既定32回で、失敗したネイティブロードも数えます。
 上限に達したら開発ホストを再起動します。DLL の回収で消費済みの枠が戻ることはありません。

@@ -123,6 +123,23 @@ pub(crate) fn negotiate(
             )
         };
         if result != 0 {
+            if api.header.struct_size as usize >= std::mem::size_of::<HandlerApi>()
+                && api.metadata_version == 1
+            {
+                if let Some(describe) = api.describe {
+                    let mut metadata = vec![0; MAX_INIT_BYTES];
+                    // The caller holds the native call-return guard throughout
+                    // negotiation. Only host-owned bytes escape this callback.
+                    let length = unsafe { describe(metadata.as_mut_ptr(), metadata.len()) };
+                    if length > 0 && length <= metadata.len() {
+                        metadata.truncate(length);
+                        return Err(RouteError::InitDiagnostic {
+                            error: ServiceError(result),
+                            metadata,
+                        });
+                    }
+                }
+            }
             return Err(RouteError::InitData(ServiceError(result)));
         }
     }

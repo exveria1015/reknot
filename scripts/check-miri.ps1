@@ -28,6 +28,9 @@ $taskGroups = @(
     @{ Name = 'service-contracts'; Args = @('--test', 'service_contracts') },
     @{ Name = 'typed-handlers'; Args = @('--features', 'typed', '--test', 'typed_handlers') },
     @{ Name = 'typed-services'; Args = @('--features', 'typed', '--test', 'typed_services') },
+    @{ Name = 'abi-metadata'; Package = 'reknot_abi'; Args = @('--test', 'metadata') },
+    @{ Name = 'typed-contracts'; Args = @('--features', 'typed', '--test', 'typed_contracts') },
+    @{ Name = 'typed-restart'; Args = @('--features', 'typed', '--test', 'typed_restart') },
     @{ Name = 'typed-bridge'; Args = @('--features', 'typed', '--test', 'typed_bridge') }
 )
 
@@ -59,6 +62,8 @@ try {
         'reknot/src/typed/mod.rs', 'reknot/src/typed/runtime.rs', 'reknot_macros/src/typed.rs',
         'reknot/src/typed/bridge.rs', 'reknot/tests/typed_bridge.rs',
         'reknot/tests/typed_handlers.rs', 'reknot/tests/typed_services.rs',
+        'reknot/src/typed/schema.rs', 'reknot/src/typed/restart.rs',
+        'reknot/tests/typed_contracts.rs', 'reknot/tests/typed_restart.rs', 'reknot_abi/tests/metadata.rs',
         'Cargo.lock'
     )
     $taskHashes = foreach ($taskFile in $taskSourceFiles) {
@@ -79,8 +84,9 @@ try {
         if ($taskModel -eq 'Tree') { $env:MIRIFLAGS += ' -Zmiri-tree-borrows' }
         foreach ($taskGroup in $taskGroups) {
             $taskLogName = "$($taskModel.ToLowerInvariant())-$($taskGroup.Name).log"
+            $taskPackage = if ($taskGroup.Package) { $taskGroup.Package } else { 'reknot' }
             $taskArgs = @(
-                "+$Toolchain", 'miri', 'test', '-p', 'reknot',
+                "+$Toolchain", 'miri', 'test', '-p', $taskPackage,
                 '--no-default-features', '--locked', '--target', 'x86_64-unknown-linux-gnu'
             ) + $taskGroup.Args
             Write-Host "Running $taskModel / $($taskGroup.Name) (seed $Seed)"

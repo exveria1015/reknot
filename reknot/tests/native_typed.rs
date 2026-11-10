@@ -268,3 +268,123 @@ typed_helper = {{ path = "helper" }}
     let _ = dev.update();
     ready(shutdown).unwrap();
 }
+
+#[test]
+#[ignore = "builds native DLLs with changed same-name schemas and restartable workers"]
+fn native_structural_diagnostics_and_typed_restart_with_migration() {
+    use reknot::typed::{ExportedModule, ReloadMode, WorkerState};
+    use reknot::WorkerId;
+    const WORK: Handler<(), Result<(), String>> = Handler::new("evolution.worker", 1);
+    const ECHO: Handler<String, String> = Handler::new("evolution.echo", 1);
+    const STATE: WorkerState<u64> = WorkerState::new("evolution.state", 1);
+    const NEXT: WorkerState<u64> = WorkerState::new("evolution.state", 2);
+    let project = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("typed-evolution-{}", std::process::id()));
+    std::fs::create_dir_all(project.join("src")).unwrap();
+    let sdk = env!("CARGO_MANIFEST_DIR").replace('\\', "/");
+    std::fs::write(project.join("Cargo.toml"), format!("[package]\nname = \"typed_evolution\"\nversion = \"0.0.0\"\nedition = \"2021\"\n[lib]\ncrate-type = [\"cdylib\"]\n[dependencies]\nreknot = {{ path = {}, default-features = false, features = [\"typed\"] }}\nserde = {{ version = \"1\", features = [\"derive\"] }}\n[workspace]\n", serde_json::to_string(&sdk).unwrap())).unwrap();
+    let source = include_str!("fixtures/typed_evolution.rs");
+    let logic = project.join("src/lib.rs");
+    std::fs::write(&logic, source).unwrap();
+    let build = || {
+        let output = Command::new("cargo")
+            .current_dir(&project)
+            .args(["build", "--offline"])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    build();
+    let library = project.join("target/debug").join(format!(
+        "{}typed_evolution{}",
+        std::env::consts::DLL_PREFIX,
+        std::env::consts::DLL_SUFFIX
+    ));
+    // Capture the first DLL's owned contract, exactly as an old host would keep
+    // it. Rebuilding the same crate preserves Rust type names while fields change.
+    let manifest = unsafe {
+        let library = libloading::Library::new(&library).unwrap();
+        let entry = library
+            .get::<unsafe extern "C" fn() -> *const reknot::HandlerApi>(b"hot_handler_api")
+            .unwrap();
+        let api = reknot::HandlerApi::read_compatible(entry());
+        let mut bytes = vec![0; reknot::MAX_INIT_BYTES];
+        let length = api.describe.unwrap()(bytes.as_mut_ptr(), bytes.len());
+        serde_json::from_slice::<ExportedModule>(&bytes[..length])
+            .unwrap()
+            .module
+    };
+    let mut options = DevOptions::new(project.join("Cargo.toml"), "typed_evolution")
+        .with_reload_mode(ReloadMode::Restart);
+    options.debounce = Duration::from_millis(30);
+    let mut dev = unsafe { DevModule::start(manifest.builder(), options) }.unwrap();
+    let host = dev.host().clone();
+    host.start_worker(WorkerId(1), WORK, (), STATE, &0).unwrap();
+    assert!(host
+        .poll_workers(&mut Context::from_waker(Waker::noop()))
+        .is_pending());
+    std::fs::write(&logic, source.replace("value: u32", "value: String")).unwrap();
+    let event = wait(&mut dev, |event| {
+        matches!(event, ReloadEvent::Rejected { .. })
+    });
+    let ReloadEvent::Rejected {
+        error: Error::Contract { report, .. },
+    } = event
+    else {
+        panic!("expected structured contract error")
+    };
+    assert!(report
+        .differences
+        .iter()
+        .any(|d| d.handler.as_deref() == Some("evolution.packet")
+            && d.path.contains("/properties/value/type")
+            && d.source.is_some()));
+    assert_eq!(
+        report.expected.handlers()[1].input,
+        report.candidate.as_ref().unwrap().module.handlers()[1].input
+    );
+    assert_eq!(host.generation(), 1);
+    assert!(host.is_accepting());
+    assert_eq!(host.worker_checkpoint(WorkerId(1), STATE).unwrap(), Some(1));
+
+    let second = source.replace("logic-v1", "logic-v2");
+    std::fs::write(&logic, &second).unwrap();
+    wait(&mut dev, |event| matches!(event, ReloadEvent::Restarting));
+    wait(&mut dev, |event| {
+        matches!(event, ReloadEvent::Reloaded { .. })
+    });
+    assert_eq!(host.generation(), 2);
+    assert_eq!(host.worker_checkpoint(WorkerId(1), STATE).unwrap(), Some(2));
+    let _ = dev.update();
+    assert_eq!(host.worker_checkpoint(WorkerId(1), STATE).unwrap(), Some(3));
+    assert_eq!(
+        ready(host.handler(ECHO).unwrap().call("hello".into())).unwrap(),
+        "logic-v2:hello"
+    );
+
+    std::fs::write(
+        &logic,
+        second.replace("\"evolution.state\", 1", "\"evolution.state\", 2"),
+    )
+    .unwrap();
+    build();
+    let restart =
+        unsafe { host.restart_with(&library, NEXT.migrate(|_, old| Ok(STATE.decode(old)? + 10))) }
+            .unwrap();
+    assert_eq!(ready(restart).unwrap(), 3);
+    assert_eq!(host.worker_checkpoint(WorkerId(1), NEXT).unwrap(), Some(14));
+    host.remove_worker(WorkerId(1)).unwrap();
+    for _ in 0..20 {
+        if host
+            .poll_cleanup(&mut Context::from_waker(Waker::noop()))
+            .is_ready()
+        {
+            return;
+        }
+    }
+    panic!("worker cleanup did not finish");
+}

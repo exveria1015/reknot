@@ -20,6 +20,10 @@
 | `Source changed during the build` | 追加の編集があり、古い候補を破棄した状態。次のビルド結果を待つ |
 | `load-attempt budget reached` | 開発ホストを再起動する。DLL の回収では消費したロード枠は戻らない |
 
+`Error::Contract` は照合段階・ハンドラー・JSON ポインター・期待値と実値・取得できたソース位置を示します。
+例えば `/input_schema/deserialize/properties/value/type` は該当フィールドの形式です。
+全体は `report.expected` と `report.candidate` で確認できます。[契約エラー](CONTRACTS_AND_SCHEMAS.md) を参照してください。
+
 適用の完了は `New events use generation ...` で確認します。
 監視対象外のファイルや `.cargo` の新規作成については、[監視範囲](DEVELOPMENT.md#ソース監視の範囲) を参照してください。
 

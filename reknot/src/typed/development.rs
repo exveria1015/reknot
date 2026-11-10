@@ -1,4 +1,6 @@
-use super::{BridgeDriver, BridgeOptions, Error, ModuleBuilder, ModuleClient, ModuleHost};
+use super::{
+    BridgeDriver, BridgeOptions, Error, ModuleBuilder, ModuleClient, ModuleHost, ModuleRestart,
+};
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Deserialize;
 use std::collections::HashSet;
@@ -13,10 +15,17 @@ use std::time::{Duration, Instant};
 
 /// Source location, Cargo package and save debounce. Cargo's metadata resolves
 /// workspace targets and local dependencies; paths need not follow this repository.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReloadMode {
+    Drain,
+    Restart,
+}
+
 pub struct DevOptions {
     pub manifest_path: PathBuf,
     pub package: String,
     pub debounce: Duration,
+    pub reload_mode: ReloadMode,
 }
 impl DevOptions {
     pub fn new(manifest_path: impl Into<PathBuf>, package: impl Into<String>) -> Self {
@@ -24,12 +33,20 @@ impl DevOptions {
             manifest_path: manifest_path.into(),
             package: package.into(),
             debounce: Duration::from_millis(200),
+            reload_mode: ReloadMode::Drain,
         }
+    }
+}
+impl DevOptions {
+    pub fn with_reload_mode(mut self, mode: ReloadMode) -> Self {
+        self.reload_mode = mode;
+        self
     }
 }
 #[derive(Debug)]
 pub enum ReloadEvent {
     Building,
+    Restarting,
     Reloaded { generation: u64 },
     BuildFailed { diagnostics: String },
     Rejected { error: Error },
@@ -39,6 +56,7 @@ pub enum ReloadEvent {
 impl std::fmt::Display for ReloadEvent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Restarting => f.write_str("Restart requested; admission paused while registered roots and children finish"),
             Self::Building => f.write_str("Building edited logic; current handlers remain available"),
             Self::Reloaded { generation } => write!(f, "New events use generation {generation}"),
             Self::BuildFailed { diagnostics } => write!(f, "Build failed; keeping the current generation. Fix and save to retry.\n{diagnostics}"),
@@ -64,6 +82,8 @@ pub struct DevModule {
     debounce: Duration,
     build: Option<(u64, mpsc::Receiver<Result<BuildOutput, String>>)>,
     bridges: Vec<BridgeDriver>,
+    reload_mode: ReloadMode,
+    restart: Option<ModuleRestart>,
 }
 impl DevModule {
     /// # Safety
@@ -89,6 +109,8 @@ impl DevModule {
             debounce: options.debounce,
             build: None,
             bridges: Vec::new(),
+            reload_mode: options.reload_mode,
+            restart: None,
         })
     }
     pub fn host(&self) -> &ModuleHost {
@@ -112,6 +134,21 @@ impl DevModule {
                 .poll(&mut Context::from_waker(Waker::noop()))
                 .is_pending()
         });
+        let _ = self
+            .host
+            .poll_workers(&mut Context::from_waker(Waker::noop()));
+        if let Some(restart) = &mut self.restart {
+            return match Pin::new(restart).poll(&mut Context::from_waker(Waker::noop())) {
+                std::task::Poll::Pending => None,
+                std::task::Poll::Ready(result) => {
+                    self.restart = None;
+                    Some(match result {
+                        Ok(generation) => ReloadEvent::Reloaded { generation },
+                        Err(error) => ReloadEvent::Rejected { error },
+                    })
+                }
+            };
+        }
         if let Ok(message) = self.watch_errors.try_recv() {
             return Some(ReloadEvent::WatchFailed { message });
         }
@@ -172,9 +209,20 @@ impl DevModule {
                             if self.revision.load(Ordering::Acquire) != revision {
                                 ReloadEvent::Superseded
                             } else {
-                                match self.host.activate(candidate) {
-                                    Ok(generation) => ReloadEvent::Reloaded { generation },
-                                    Err(error) => ReloadEvent::Rejected { error },
+                                match self.reload_mode {
+                                    ReloadMode::Drain => match self.host.activate(candidate) {
+                                        Ok(generation) => ReloadEvent::Reloaded { generation },
+                                        Err(error) => ReloadEvent::Rejected { error },
+                                    },
+                                    ReloadMode::Restart => {
+                                        match self.host.restart_prepared(candidate) {
+                                            Ok(restart) => {
+                                                self.restart = Some(restart);
+                                                ReloadEvent::Restarting
+                                            }
+                                            Err(error) => ReloadEvent::Rejected { error },
+                                        }
+                                    }
                                 }
                             }
                         }

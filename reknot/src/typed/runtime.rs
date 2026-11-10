@@ -3,7 +3,7 @@ use crate::{
     HandlerApi, HandlerEnvironment, HostResource, HostResources, InitData, PreparedHandler,
     RequestRouter, RequestTask, Resource, ResourceId, RouterOptions, RunStatus, ServiceError,
 };
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::future::Future;
 use std::pin::Pin;
 use std::rc::Rc;
@@ -58,7 +58,11 @@ impl ModuleBuilder {
     fn finish(self, router: RequestRouter) -> ModuleHost {
         ModuleHost(Rc::new(State {
             router: RefCell::new(router),
-            module: self.module,
+            module: RefCell::new(self.module),
+            environment: self.environment,
+            workers: RefCell::new(std::collections::HashMap::new()),
+            abandoned_restart: Cell::new(false),
+            admission_waiters: RefCell::new(Vec::new()),
             resources: self.resources,
             max_in_flight: self.max_in_flight,
         }))
@@ -92,34 +96,48 @@ impl ModuleBuilder {
         Ok(self.finish(router))
     }
 }
-struct State {
-    router: RefCell<RequestRouter>,
-    module: Module,
-    resources: HostResources,
-    max_in_flight: usize,
+pub(super) struct State {
+    pub(super) router: RefCell<RequestRouter>,
+    pub(super) module: RefCell<Module>,
+    pub(super) resources: HostResources,
+    pub(super) max_in_flight: usize,
+    pub(super) environment: HandlerEnvironment,
+    pub(super) workers:
+        RefCell<std::collections::HashMap<crate::WorkerId, Resource<super::restart::WorkerReply>>>,
+    pub(super) abandoned_restart: Cell<bool>,
+    pub(super) admission_waiters: RefCell<Vec<std::task::Waker>>,
 }
 
 /// Owner-thread controller. Cloned handles stay registered across successful reloads.
 /// A request selects its generation when `HandlerHandle::call` is invoked.
 #[derive(Clone)]
-pub struct ModuleHost(Rc<State>);
+pub struct ModuleHost(pub(super) Rc<State>);
 impl ModuleHost {
-    pub(super) fn module(&self) -> &Module {
-        &self.0.module
+    pub(super) fn module(&self) -> Module {
+        self.0.module.borrow().clone()
     }
     pub fn handler<I, O>(&self, handler: Handler<I, O>) -> Result<HandlerHandle<I, O>, Error>
     where
-        I: Serialize + DeserializeOwned + 'static,
-        O: Serialize + DeserializeOwned + 'static,
+        I: Serialize + DeserializeOwned + JsonSchema + 'static,
+        O: Serialize + DeserializeOwned + JsonSchema + 'static,
     {
-        if !self.0.module.handlers.contains(&handler.descriptor()) {
+        if !self
+            .0
+            .module
+            .borrow()
+            .handlers
+            .contains(&handler.descriptor())
+        {
             return Err(Error::Configuration(format!(
                 "handler {} v{} is not registered in module {} with these input/output types",
-                handler.name, handler.version, self.0.module.name
+                handler.name,
+                handler.version,
+                self.0.module.borrow().name
             )));
         }
         Ok(HandlerHandle {
             host: self.clone(),
+            spec: handler.descriptor(),
             handler,
         })
     }
@@ -130,8 +148,9 @@ impl ModuleHost {
         self.0.router.borrow().in_flight()
     }
     pub(super) fn call_raw(&self, handler: &HandlerSpec, bytes: Vec<u8>) -> RawCall {
+        self.settle_abandoned_restart();
         let admission = (|| {
-            if !self.0.module.handlers.contains(handler) {
+            if !self.0.module.borrow().handlers.contains(handler) {
                 return Err(Error::Configuration(format!(
                     "handler {} is not registered with this contract",
                     handler.name
@@ -174,6 +193,7 @@ impl ModuleHost {
     /// Drive dropped-request cleanup on this thread, even while no new events arrive.
     /// No DLL is unloaded here. Callers must keep polling if this returns Pending.
     pub fn poll_cleanup(&self, cx: &mut Context<'_>) -> Poll<()> {
+        self.settle_abandoned_restart();
         let status = crate::poll_cancelled_requests(cx);
         if let Ok(mut router) = self.0.router.try_borrow_mut() {
             router.release_retired_generations();
@@ -204,7 +224,7 @@ impl ModuleHost {
             .try_borrow()
             .map_err(|_| Error::Busy)?
             .prepare_api(api)
-            .map_err(|e| route_error(&self.0.module, e))?;
+            .map_err(|e| route_error(&self.0.module.borrow(), e))?;
         self.activate(candidate)
     }
     #[cfg(feature = "native")]
@@ -217,13 +237,13 @@ impl ModuleHost {
             .try_borrow()
             .map_err(|_| Error::Busy)?
             .prepare(path)
-            .map_err(|e| route_error(&self.0.module, e))
+            .map_err(|e| route_error(&self.0.module.borrow(), e))
     }
     pub(super) fn activate(&self, candidate: PreparedHandler) -> Result<u64, Error> {
         let mut router = self.0.router.try_borrow_mut().map_err(|_| Error::Busy)?;
         let generation = router
             .activate(candidate)
-            .map_err(|e| route_error(&self.0.module, e))?;
+            .map_err(|e| route_error(&self.0.module.borrow(), e))?;
         router.release_retired_generations();
         Ok(generation)
     }
@@ -233,23 +253,27 @@ impl ModuleHost {
 pub struct HandlerHandle<I, O> {
     host: ModuleHost,
     handler: Handler<I, O>,
+    spec: HandlerSpec,
 }
 impl<I, O> Clone for HandlerHandle<I, O> {
     fn clone(&self) -> Self {
         Self {
             host: self.host.clone(),
             handler: self.handler,
+            spec: self.spec.clone(),
         }
     }
 }
-impl<I: Serialize + DeserializeOwned + 'static, O: Serialize + DeserializeOwned + 'static>
-    HandlerHandle<I, O>
+impl<
+        I: Serialize + DeserializeOwned + JsonSchema + 'static,
+        O: Serialize + DeserializeOwned + JsonSchema + 'static,
+    > HandlerHandle<I, O>
 {
     /// Admit immediately, then await the returned future on the same thread.
     /// This never retries the handler. Application `Result<T,E>` remains an ordinary result value.
     pub fn call(&self, input: I) -> Call<O> {
         let raw = match encode(&input, MAX_MESSAGE_BYTES) {
-            Ok(bytes) => self.host.call_raw(&self.handler.descriptor(), bytes),
+            Ok(bytes) => self.host.call_raw(&self.spec, bytes),
             Err(error) => RawCall {
                 admission: Some(Err(error)),
             },

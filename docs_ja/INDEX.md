@@ -20,8 +20,11 @@
 - [非同期サービスと複数スレッド](ASYNC_SERVICES_AND_THREADS.md) — ホスト側の I/O を待つ、キャンセルする、スレッド間で通知する。
 - [複数サービスと型付き初期化](SERVICE_CONTRACTS_AND_INIT.md) — 必要なサービスを宣言し、世代ごとの設定を渡す。
 
+- [契約エラーとスキーマ](CONTRACTS_AND_SCHEMAS.md) — スキーマ生成、構造差の診断、契約の出力。
+
 ## 状態を保ち、処理を終了する
 
+- [型付き Restart](TYPED_RESTART.md) — 型付きワーカーの登録、状態移行、中断後の復旧。
 - [Restart と状態移行](RESTART_AND_MIGRATION.md) — 登録ワーカーの協調停止、チェックポイント移行、再生成。
 - [ホスト資源・DB の移行](HOST_RESOURCE_MIGRATION.md) — SQLite とキャッシュの排他、確定フック、失敗時の復旧。
 - [子タスクと外部コールバック](MANAGED_ACTIVITIES.md) — 子処理の明示登録、停止要求、終了待ち。

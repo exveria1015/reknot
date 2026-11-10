@@ -27,15 +27,16 @@ Development hosts enable the default features, or `typed`, `native` and `dev-too
 
 ### Contract checks and input/output
 
-Candidate validation compares module names/versions, handler names/versions, Rust input/output type names and the actual export list.
+Candidate validation compares module names/versions, handler names/versions, Rust input/output type names, generated schemas in both Serde directions, state contracts and the actual export list.
 List order does not matter. Duplicate keys and detectable hash collisions are registration errors.
 Identities are not generated from Rust function names and do not grant permissions.
 
-Matching type names do not establish compatibility of fields, Serde attributes, formats or semantics.
+Use `#[reknot::schema]` on protocol types. Structural differences produce an `Error::Contract { report, source }` with expected/actual values, JSON pointers and handler source locations.
+Equal schemas do not establish semantic compatibility. See [contract diagnostics](CONTRACTS_AND_SCHEMAS.md).
 When these change, increment the corresponding contract version and rebuild/restart the host too.
 Adding or removing a handler also requires updating the declaration shared by host and logic.
 
-Inputs and outputs are owned values satisfying `Serialize + DeserializeOwned + 'static`.
+Inputs and outputs are owned values satisfying `Serialize + DeserializeOwned + JsonSchema + 'static`.
 Group several arguments into a struct or tuple; use `()` when no value is needed.
 Borrowed SDK objects, `&self` methods and generic functions are not supported.
 
@@ -106,7 +107,12 @@ The initialization-data slot also holds the module contract. Pass configuration 
 Register child work under the existing `spawn_child` and `register_activity` contracts.
 
 See [development operation](DEVELOPMENT.md) for watching/building and [DLL lifetime](UNLOAD_SAFETY.md) for native code ownership.
-The typed API covers single-module Drain. Multi-DLL atomic updates, structural compatibility inference and high-level Restart are not provided.
+The typed API covers single-module Drain and [typed Restart](TYPED_RESTART.md). `WorkerState<S>` defines checkpoints;
+`start_worker`, `poll_workers`, `stop_worker`, `remove_worker`, `worker_status`, `worker_error` and `worker_checkpoint` manage registered roots.
+`restart` / `restart_api` preserve state; `restart_with` / `restart_api_with` accept an explicit `StateMigration`.
+`ModuleRestart` is an owner-thread future. Failure or interruption keeps admission paused; `resume()` is explicit recovery.
+`DevOptions::with_reload_mode(ReloadMode::Restart)` opts into automatic Restart for unchanged state contracts.
+`Module::schema_json()` exports the full contract. Multi-DLL atomic updates remain outside this API.
 
 ## Message API
 

@@ -6,10 +6,11 @@ the logic. Drain finishes existing work on old code. Restart cooperatively stops
 registered workers and recreates them from versioned checkpoints.
 
 Start with `handler`, `export_handlers!` and `typed::ModuleHost` for ordinary
-typed functions, stable handles and single-module Drain updates. See the
+typed functions, stable handles and single-module Drain/Restart updates with structural schema checks. See the
 [typed-handler guide](https://github.com/exveria1015/reknot/blob/main/docs/TYPED_HANDLERS.md).
 `reknot-new PATH` generates a standalone host/logic/protocol workspace using the SDK
-source that built the command (`--sdk-path` overrides the reknot crate path).
+from an exact registry version, a fixed Git commit (`--sdk-rev`) or an explicit local path (`--sdk-path`).
+Unpublished source candidates use the Git route; see the guide for installation commands.
 The typed host bridge provides Send + Sync clients, bounded admission and explicit
 shutdown/join while native tasks remain on their owner thread.
 

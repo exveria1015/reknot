@@ -17,7 +17,10 @@ After startup, it calls `DevModule::update()` regularly to drive this sequence:
 The current generation can accept work during a build. Already admitted requests finish on their selected generation.
 If more edit notifications arrive, the controller discards the superseded build result and rebuilds.
 
-`update()` also drives bridge requests and cancellation cleanup.
+`update()` also drives bridge requests, registered workers and cancellation cleanup.
+Drain is the default. `DevOptions::with_reload_mode(ReloadMode::Restart)` selects [typed Restart](TYPED_RESTART.md).
+It pauses admission after preflight, then waits for roots/children before cutover. Failures after this point stay paused.
+Edits arriving during a pending Restart are processed after it finishes; its shutdown is not rolled back.
 Keep calling it while waiting for input, running requests and awaiting shutdown.
 Dropping `DevModule` stops watching and applying updates, but an already started Cargo process runs to completion.
 

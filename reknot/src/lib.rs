@@ -41,7 +41,7 @@ pub use reknot_abi::services::{
 pub use reknot_abi::{HostWaker, HostWakerVTable, RunStatus, TaskHandle, TaskVTable};
 pub use reknot_macros::reload_handler;
 #[cfg(feature = "typed")]
-pub use reknot_macros::{export_handlers, handler};
+pub use reknot_macros::{export_handlers, handler, schema};
 pub use request::RequestContext;
 pub use resources::{HostResource, HostResources, Resource, Services};
 #[cfg(feature = "native")]

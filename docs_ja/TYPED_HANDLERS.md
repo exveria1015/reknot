@@ -13,7 +13,7 @@ Rust 1.95 以上と Cargo を用意し、SDK リポジトリのルートで実�
 ここでは、まだ存在しない `../my-bot` にプロジェクトを作ります。
 
 ```sh
-cargo run -p reknot --bin reknot-new --locked -- ../my-bot
+cargo run -p reknot --bin reknot-new --locked -- ../my-bot --sdk-path ./reknot
 cd ../my-bot
 cargo run
 ```
@@ -72,7 +72,7 @@ reknot::export_handlers!(module(), [reply]);
 更新時は、このハンドラーと `decorate` のような補助関数を同じ DLL として切り替えます。
 
 引数は所有する入力1個、戻り値は所有する出力です。入力が不要なら `()`、複数の値を渡すなら構造体やタプルを使います。
-ユーザー定義型には Serde の `Serialize` と `Deserialize` を実装します。
+ユーザー定義型には Serde の `Serialize` と `Deserialize` を実装し、`#[reknot::schema]` を付けます。
 借用した SDK オブジェクト、`&self` を持つメソッド、ジェネリック関数は対象外です。
 
 `Result<String, String>` は、この例では返信または入力エラーを表します。
@@ -91,6 +91,7 @@ use serde::{Deserialize, Serialize};
 pub const REPLY: Handler<Message, Result<String, String>> =
     Handler::new("my-bot.reply", 1);
 
+#[reknot::schema]
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Message {
@@ -109,7 +110,8 @@ Rust の関数名を変えても、この識別名は維持できます。
 
 **型名が同じでも、入出力の互換性が保たれるとは限りません。**
 フィールド、Serde 属性、データの形式や意味を変えたら、対応する契約の版を上げ、ホストも再ビルド・再起動してください。
-SDK は同名型の構造や意味の変化を自動判定しません。
+SDK は Serde の両方向について生成したスキーマを照合し、フィールドと対応する Serde 属性の差を適用前に拒否します。
+意味の変更には明示的な版管理が必要です。[契約エラーとスキーマ](CONTRACTS_AND_SCHEMAS.md) を参照してください。
 
 ## 変更ごとの進め方
 
@@ -225,10 +227,24 @@ cargo run --no-default-features --features static-logic --locked
 | 指定 | 使う場面 |
 | --- | --- |
 | `--name my-bot` | フォルダー名に日本語や空白を使うなど、Cargo のパッケージ名を別に決めたいとき |
-| `--sdk-path PATH` | `reknot-new` のビルド時とは別の SDK ソースを参照するとき。`reknot` crate のディレクトリを指定する |
+| `--sdk-version VERSION` | crates.io の SDK を完全一致の版で指定する。既定は CLI と同じ版 |
+| `--sdk-rev COMMIT` | ソース候補を Git の完全なコミット SHA で固定する |
+| `--sdk-git URL` | Git リポジトリを変更する。`--sdk-rev` も必要 |
+| `--sdk-path PATH` | ローカルの `reknot` crate で SDK 自体を開発する |
 
-生成した `Cargo.toml` は、SDK の**ローカルソース**を参照します。
-SDK を移動した場合は、`workspace.dependencies.reknot.path` も変更してください。
+既定では crates.io の版を完全一致で指定します。このソース RC はまだ crates.io に公開していないため、
+リリースノートに記載された検証済みの完全な SHA で、下記の `VERIFIED_COMMIT` を置き換えてください。
+
+```sh
+cargo install --git https://github.com/exveria1015/reknot.git --rev VERIFIED_COMMIT --locked --bin reknot-new reknot
+reknot-new ../my-bot --sdk-rev VERIFIED_COMMIT
+```
+
+この経路では SDK のチェックアウトを保持する必要はありません。レジストリ公開後は
+`cargo install reknot --version 0.1.0-rc.2 --locked --bin reknot-new` と `reknot-new ../my-bot` を使えます。
+参照元の指定は一度に1種類です。ローカルの path 依存になるのは `--sdk-path` を指定した場合だけです。
+生成した protocol には `cargo run -p my-bot-protocol --example schema` による JSON スキーマ出力も含まれます。
+実際の protocol パッケージ名は、その `Cargo.toml` で確認してください。
 
 ## 詳しい仕様を確認する
 
@@ -236,7 +252,7 @@ SDK を移動した場合は、`workspace.dependencies.reknot.path` も変更し
 - [開発時の運用](DEVELOPMENT.md) — 監視するファイル、依存関係の変更、ビルド失敗からの復旧。
 - [DLL の寿命と回収](UNLOAD_SAFETY.md) — 既定の保持と明示回収の条件。ロード試行の既定上限は32回で、回収しても枠は戻りません。
 
-現在の型付き API は、単一モジュールの Drain を対象とします。
-複数 DLL の一括更新・依存世代の対応表、Restart の高レイヤー化、型の構造からの自動互換性判定は未提供です。
+型付き API は単一モジュールの Drain と [型付き Restart](TYPED_RESTART.md)、[型構造の照合](CONTRACTS_AND_SCHEMAS.md) に対応します。
+複数 DLL の一括更新・依存世代の対応表は対象外です。
 
 [日本語 README](README.md) · [ドキュメント一覧](INDEX.md)

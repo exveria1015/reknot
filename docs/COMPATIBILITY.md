@@ -34,7 +34,8 @@ See [build configurations](API_REFERENCE.md#build-configurations) for the settin
 
 | Boundary | Version / contract |
 | --- | --- |
-| Handler ABI | 5 |
+| Handler ABI | 5; original prefix retained, optional metadata tail v1 |
+| Typed contract | v2; schemas in both Serde directions, `JsonSchema` required |
 | Host services ABI | 2 |
 | Task-control ABI | 2 |
 | Host and logic | Build together against the same SDK and compatible target/toolchain |

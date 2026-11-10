@@ -13,7 +13,7 @@ With Rust 1.95 or later and Cargo installed, run these commands from the SDK rep
 This example creates the project in `../my-bot`, which must not exist yet.
 
 ```sh
-cargo run -p reknot --bin reknot-new --locked -- ../my-bot
+cargo run -p reknot --bin reknot-new --locked -- ../my-bot --sdk-path ./reknot
 cd ../my-bot
 cargo run
 ```
@@ -72,7 +72,7 @@ The `handler` attribute generates an entry point. `export_handlers!` exports the
 An update replaces this handler and helpers such as `decorate` as one DLL.
 
 A handler takes one owned input and returns one owned output. Use `()` for no input, or a struct or tuple for several values.
-Implement Serde's `Serialize` and `Deserialize` for your own types.
+Implement Serde's `Serialize` and `Deserialize` and add `#[reknot::schema]` to your own types.
 Borrowed SDK objects, methods taking `&self` and generic functions are not supported.
 
 Here, `Result<String, String>` represents a reply or an input error.
@@ -91,6 +91,7 @@ use serde::{Deserialize, Serialize};
 pub const REPLY: Handler<Message, Result<String, String>> =
     Handler::new("my-bot.reply", 1);
 
+#[reknot::schema]
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Message {
@@ -109,7 +110,8 @@ A loaded code generation and an input/output contract version are separate value
 
 **Keeping the same type name does not establish input/output compatibility.**
 When fields, Serde attributes, data formats or meanings change, increment the corresponding contract version and rebuild/restart the host too.
-The SDK does not infer changes to the structure or meaning of a type with the same name.
+The SDK compares generated structural schemas in both Serde directions, including fields and supported Serde attributes.
+It rejects structural differences before activation; semantic changes still need explicit versioning. See [diagnostics and schemas](CONTRACTS_AND_SCHEMAS.md).
 
 ## Apply each kind of change
 
@@ -225,10 +227,24 @@ Generation only writes files; it does not build the project or initialize Git.
 | Option | When to use it |
 | --- | --- |
 | `--name my-bot` | Choose a Cargo package name independently of the directory, for example when the directory contains spaces or Japanese characters |
-| `--sdk-path PATH` | Reference SDK sources other than those used to build `reknot-new`; point to the `reknot` crate directory |
+| `--sdk-version VERSION` | Pin an exact crates.io SDK version; the default is the CLI version |
+| `--sdk-rev COMMIT` | Pin a full Git commit SHA for a source candidate |
+| `--sdk-git URL` | Override the Git repository; requires `--sdk-rev` |
+| `--sdk-path PATH` | Develop against a local `reknot` crate directory |
 
-The generated `Cargo.toml` references the SDK's **local source**.
-If you move the SDK, update `workspace.dependencies.reknot.path` too.
+The default dependency is an exact crates.io version. This source RC is not published there yet;
+use its verified full commit SHA from the release notes (replace `VERIFIED_COMMIT` below):
+
+```sh
+cargo install --git https://github.com/exveria1015/reknot.git --rev VERIFIED_COMMIT --locked --bin reknot-new reknot
+reknot-new ../my-bot --sdk-rev VERIFIED_COMMIT
+```
+
+This route does not need a retained SDK checkout. After registry publication, use
+`cargo install reknot --version 0.1.0-rc.2 --locked --bin reknot-new` and `reknot-new ../my-bot`.
+Choose one source per invocation. Only `--sdk-path` creates a local-path dependency.
+The generated protocol also includes `cargo run -p my-bot-protocol --example schema` for JSON schema export;
+use the actual protocol package name from its `Cargo.toml`.
 
 ## Look up the detailed contracts
 
@@ -236,7 +252,7 @@ If you move the SDK, update `workspace.dependencies.reknot.path` too.
 - [Development operation](DEVELOPMENT.md) — Watched files, dependency changes and recovery from build failures.
 - [DLL lifetime and reclamation](UNLOAD_SAFETY.md) — Default retention and explicit reclamation conditions. The default load-attempt budget is 32; reclamation does not refund it.
 
-The typed API currently supports Drain for a single module.
-Atomic updates across DLLs, cross-module generation sets, a high-level Restart API and structural compatibility inference are not provided.
+The typed API supports single-module Drain and [typed Restart](TYPED_RESTART.md), plus [structural schema checks](CONTRACTS_AND_SCHEMAS.md).
+Atomic updates across DLLs and cross-module generation sets remain outside this API.
 
 [Project README](README.md) · [Documentation index](INDEX.md)

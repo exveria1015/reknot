@@ -36,7 +36,7 @@ If a build fails, the running logic stays in use. Fix the error and save to retr
 Generate a starter project from the repository root:
 
 ```sh
-cargo run -p reknot --bin reknot-new --locked -- ../my-bot
+cargo run -p reknot --bin reknot-new --locked -- ../my-bot --sdk-path ./reknot
 cd ../my-bot
 cargo run
 ```
@@ -65,9 +65,8 @@ After a switch, requests already admitted continue to completion on the old gene
 This is **Drain**. The entry points registered with the host stay in place and route later work to the new generation.
 For calls queued from another thread, the owner thread selects the generation when it admits the request for execution.
 
-The lower-level API also provides **Restart**, which stops registered workers and recreates them from saved state.
-See [Restart and state migration](RESTART_AND_MIGRATION.md) when you need it.
-The typed API currently supports Drain.
+The typed API also provides **Restart**, which stops registered workers and recreates them from typed checkpoints.
+See [typed Restart](TYPED_RESTART.md) for registration, migration and recovery. Drain remains the default.
 
 ## Before you use it
 
@@ -75,7 +74,8 @@ This SDK is under development and intended for trusted local Rust code. Its Rust
 Build the host and logic against the same SDK. See [compatibility and scope](COMPATIBILITY.md) for supported environments.
 
 When input/output formats or meanings change, increment the shared contract version and restart the host too.
-The SDK does not infer compatibility when fields change under the same Rust type name.
+Derived schemas detect structural changes even under the same Rust type name. Equal schemas do not prove equal meaning.
+See [contract diagnostics and schemas](CONTRACTS_AND_SCHEMAS.md).
 
 DLLs stay loaded by default. The default budget is 32 cumulative load attempts, including failed native loads.
 Restart the development host when the budget is exhausted. [Explicit DLL reclamation](UNLOAD_SAFETY.md) is available,

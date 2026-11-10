@@ -281,7 +281,18 @@ pub struct HandlerApi {
     pub init_schema: ServiceKey,
     /// Pure validator; must not run business logic or retain the borrowed bytes.
     pub validate_init: Option<ValidateInitFn>,
+    /// Optional metadata tail, version 1. Check struct_size before reading it.
+    pub metadata_version: u32,
+    pub describe: Option<DescribeHandlerFn>,
 }
+
+/// Pure, bounded metadata copy into host memory. Returns the required/written
+/// length, or usize::MAX on failure. Writes nothing if capacity is insufficient.
+/// Must not retain the buffer, unwind, or start application work.
+pub type DescribeHandlerFn = unsafe extern "C" fn(*mut u8, usize) -> usize;
+
+/// The frozen Handler ABI 5 prefix ends before the optional metadata extension.
+pub const HANDLER_API_V5_SIZE: usize = std::mem::offset_of!(HandlerApi, metadata_version);
 
 impl HandlerApi {
     pub const fn new(service: ServiceKey, make_request: MakeRequestFn) -> Self {
@@ -297,6 +308,8 @@ impl HandlerApi {
             required_count: 0,
             init_schema: ServiceKey::new(0, 0),
             validate_init: None,
+            metadata_version: 0,
+            describe: None,
         }
     }
 
@@ -321,6 +334,43 @@ impl HandlerApi {
         self.init_schema = schema;
         self.validate_init = Some(validate);
         self
+    }
+
+    pub const fn with_metadata(mut self, describe: DescribeHandlerFn) -> Self {
+        self.metadata_version = 1;
+        self.describe = Some(describe);
+        self
+    }
+
+    /// Read the frozen prefix and, only when present, its known extension.
+    ///
+    /// # Safety
+    /// The aligned pointer is readable for the size advertised by its header,
+    /// at least HANDLER_API_V5_SIZE. All fields and callbacks are valid ABI values.
+    pub unsafe fn read_compatible(pointer: *const Self) -> Self {
+        // Read individual prefix fields, never a full extended table from a
+        // smaller legacy allocation. Keep the original pointer provenance.
+        let header = std::ptr::addr_of!((*pointer).header).read();
+        let mut api = Self {
+            header,
+            service: std::ptr::addr_of!((*pointer).service).read(),
+            make_request: std::ptr::addr_of!((*pointer).make_request).read(),
+            state_schema: std::ptr::addr_of!((*pointer).state_schema).read(),
+            required_services: std::ptr::addr_of!((*pointer).required_services).read(),
+            required_count: std::ptr::addr_of!((*pointer).required_count).read(),
+            init_schema: std::ptr::addr_of!((*pointer).init_schema).read(),
+            validate_init: std::ptr::addr_of!((*pointer).validate_init).read(),
+            metadata_version: 0,
+            describe: None,
+        };
+        if header.struct_size as usize >= std::mem::size_of::<Self>() {
+            let version = std::ptr::addr_of!((*pointer).metadata_version).read();
+            if version == 1 {
+                api.metadata_version = version;
+                api.describe = std::ptr::addr_of!((*pointer).describe).read();
+            }
+        }
+        api
     }
 }
 

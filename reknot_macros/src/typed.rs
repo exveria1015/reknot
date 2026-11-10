@@ -24,6 +24,7 @@ pub(crate) fn handler(contract: Expr, input: ItemFn) -> syn::Result<TokenStream>
     let vis = &input.vis;
     let plain = name.unraw();
     let dispatch = format_ident!("__reknot_dispatch_{plain}");
+    let key_fn = format_ident!("__reknot_key_{plain}");
     let descriptor = format_ident!("__reknot_descriptor_{plain}");
     let args = if sig.inputs.len() == 2 {
         quote!(context, input)
@@ -41,8 +42,11 @@ pub(crate) fn handler(contract: Expr, input: ItemFn) -> syn::Result<TokenStream>
         #input
         #(#cfg)*
         #[doc(hidden)]
+        #vis fn #key_fn() -> u64 { (#contract).key() }
+        #(#cfg)*
+        #[doc(hidden)]
         #vis fn #descriptor() -> ::reknot::typed::HandlerSpec {
-            (#contract).descriptor()
+            (#contract).descriptor().at_source(file!(), line!(), column!(), concat!(module_path!(), "::", stringify!(#name)))
         }
         #(#cfg)*
         #[doc(hidden)]
@@ -115,6 +119,11 @@ pub(crate) fn export(options: Export) -> TokenStream {
         .iter()
         .map(|p| peer(p, "__reknot_descriptor_"))
         .collect();
+    let keys: Vec<_> = options
+        .handlers
+        .iter()
+        .map(|p| peer(p, "__reknot_key_"))
+        .collect();
     let dispatches: Vec<_> = options
         .handlers
         .iter()
@@ -124,26 +133,33 @@ pub(crate) fn export(options: Export) -> TokenStream {
     quote! {
         #[no_mangle]
         pub extern "C" fn hot_handler_api() -> *const ::reknot::HandlerApi {
+            static API: ::std::sync::OnceLock<::reknot::HandlerApi> = ::std::sync::OnceLock::new();
+            ::std::panic::catch_unwind(|| API.get_or_init(handler_api) as *const ::reknot::HandlerApi)
+                .unwrap_or(::std::ptr::null())
+        }
+        /// Handler table for a statically linked host. Export once per logic crate.
+        pub fn handler_api() -> ::reknot::HandlerApi {
             unsafe extern "C" fn validate(bytes: *const u8, len: usize) -> u32 {
                 ::reknot::typed::__private::validate(bytes, len, || {
+                    (#module, vec![#(#descriptors()),*])
+                })
+            }
+            unsafe extern "C" fn describe(bytes: *mut u8, capacity: usize) -> usize {
+                ::reknot::typed::__private::describe(bytes, capacity, || {
                     (#module, vec![#(#descriptors()),*])
                 })
             }
             unsafe extern "C" fn make(raw: *const ::reknot::HandlerRequest) -> ::reknot::TaskHandle {
                 ::reknot::typed::__private::make(raw, |context| {
                     let key = ::reknot::typed::__private::request_key(&context)?;
-                    #(if key == #descriptors().key() { return Ok(#dispatches(context)); })*
+                    #(if key == #keys() { return Ok(#dispatches(context)); })*
                     Err(::reknot::ServiceError::UNSUPPORTED_OPERATION)
                 })
             }
-            static API: ::reknot::HandlerApi = ::reknot::HandlerApi::new(
+            ::reknot::HandlerApi::new(
                 ::reknot::typed::__private::SERVICE, make
-            ).with_init(::reknot::typed::__private::SCHEMA, validate)#requires;
-            &API
-        }
-        /// Handler table for a statically linked host. Export once per logic crate.
-        pub fn handler_api() -> ::reknot::HandlerApi {
-            unsafe { *hot_handler_api() }
+            ).with_init(::reknot::typed::__private::SCHEMA, validate)
+             .with_metadata(describe).with_state((#module).state_key())#requires
         }
     }
 }

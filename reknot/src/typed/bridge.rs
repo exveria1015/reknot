@@ -58,7 +58,7 @@ impl Drop for RequestState {
     }
 }
 struct Job {
-    handler: HandlerSpec,
+    handler: Arc<HandlerSpec>,
     input: Vec<u8>,
     state: Arc<RequestState>,
 }
@@ -127,8 +127,8 @@ impl Drop for ModuleClient {
 impl ModuleClient {
     pub fn handler<I, O>(&self, handler: Handler<I, O>) -> Result<HandlerClient<I, O>, Error>
     where
-        I: Serialize + DeserializeOwned + 'static,
-        O: Serialize + DeserializeOwned + 'static,
+        I: Serialize + DeserializeOwned + JsonSchema + 'static,
+        O: Serialize + DeserializeOwned + JsonSchema + 'static,
     {
         if !self.0.module.handlers.contains(&handler.descriptor()) {
             return Err(Error::Configuration(format!(
@@ -138,6 +138,7 @@ impl ModuleClient {
         }
         Ok(HandlerClient {
             client: self.clone(),
+            spec: Arc::new(handler.descriptor()),
             handler,
         })
     }
@@ -174,7 +175,11 @@ impl ModuleClient {
             waiter,
         }
     }
-    fn submit(&self, handler: HandlerSpec, input: Vec<u8>) -> Result<Arc<RequestState>, Error> {
+    fn submit(
+        &self,
+        handler: Arc<HandlerSpec>,
+        input: Vec<u8>,
+    ) -> Result<Arc<RequestState>, Error> {
         let (state, wake) = {
             let mut queue = self.0.queue.lock().unwrap();
             if queue.closed {
@@ -216,24 +221,28 @@ impl ModuleClient {
 pub struct HandlerClient<I, O> {
     client: ModuleClient,
     handler: Handler<I, O>,
+    spec: Arc<HandlerSpec>,
 }
 impl<I, O> Clone for HandlerClient<I, O> {
     fn clone(&self) -> Self {
         Self {
             client: self.client.clone(),
             handler: self.handler,
+            spec: self.spec.clone(),
         }
     }
 }
-impl<I: Serialize + DeserializeOwned + 'static, O: Serialize + DeserializeOwned + 'static>
-    HandlerClient<I, O>
+impl<
+        I: Serialize + DeserializeOwned + JsonSchema + 'static,
+        O: Serialize + DeserializeOwned + JsonSchema + 'static,
+    > HandlerClient<I, O>
 {
     /// Enqueue owned bytes immediately. Generation is selected when the owner
     /// dequeues/admits the event, not when this cross-thread call enters the queue.
     /// Dropping the returned future requests cancellation without replaying work.
     pub fn call(&self, input: I) -> RemoteCall<O> {
         let result = encode(&input, MAX_MESSAGE_BYTES)
-            .and_then(|bytes| self.client.submit(self.handler.descriptor(), bytes));
+            .and_then(|bytes| self.client.submit(self.spec.clone(), bytes));
         let (state, error) = match result {
             Ok(state) => (Some(state), None),
             Err(error) => (None, Some(error)),
@@ -397,6 +406,10 @@ impl Future for BridgeDriver {
         if self.finished {
             return Poll::Ready(());
         }
+        let accepting = self.host.is_accepting();
+        if !accepting {
+            self.host.wait_for_admission(cx.waker());
+        }
         let new = cx.waker().clone();
         let (jobs, cancel, old) = {
             let mut queue = self.shared.queue.lock().unwrap();
@@ -409,7 +422,7 @@ impl Future for BridgeDriver {
             for job in waiting {
                 if queue.cancel || job.state.cancelled.load(Ordering::Acquire) {
                     jobs.push(job);
-                } else if available > 0 {
+                } else if accepting && available > 0 {
                     available -= 1;
                     jobs.push(job);
                 } else {
@@ -450,7 +463,9 @@ impl Future for BridgeDriver {
             let queue = self.shared.queue.lock().unwrap();
             (
                 queue.closed && queue.waiting.is_empty() && self.running.is_empty(),
-                !queue.waiting.is_empty() && self.running.len() < self.shared.options.max_in_flight,
+                accepting
+                    && !queue.waiting.is_empty()
+                    && self.running.len() < self.shared.options.max_in_flight,
             )
         };
         let status = if finish {

@@ -1,6 +1,6 @@
 [package]
 name = "reknot"
-version = "0.1.0-rc.1"
+version = "0.1.0-rc.2"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -9,12 +9,13 @@ description = "Message-oriented Rust hot reload with host-owned resources and ex
 readme = "README.md"
 
 [dependencies]
-reknot_abi = { version = "=0.1.0-rc.1", path = "../reknot_abi" }
-reknot_macros = { version = "=0.1.0-rc.1", path = "../reknot_macros" }
+reknot_abi = { version = "=0.1.0-rc.2", path = "../reknot_abi" }
+reknot_macros = { version = "=0.1.0-rc.2", path = "../reknot_macros" }
 libloading = { version = "0.8", optional = true }
 notify = { version = "6", optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
+schemars = { version = "=1.2.3", optional = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = { version = "0.2", optional = true }
@@ -26,7 +27,7 @@ windows-sys = { version = "0.61", optional = true, features = ["Win32_Foundation
 default = ["native", "dev-tools", "typed"]
 native = ["dep:libloading", "dep:libc", "dep:windows-sys"]
 dev-tools = ["native", "dep:notify"]
-typed = ["dep:serde", "dep:serde_json"]
+typed = ["dep:serde", "dep:serde_json", "dep:schemars"]
 
 [[bin]]
 name = "reknot-cache"

@@ -2,8 +2,8 @@
 
 [English](../docs/RELEASING.md) | 日本語
 
-Reknot の最初の候補は **ソース RC** の `v0.1.0-rc.1` です。
-`reknot`、`reknot_abi`、`reknot_macros` の版を `0.1.0-rc.1` にそろえ、
+Reknot の現在の候補は **ソース RC** の `v0.1.0-rc.2` です。
+`reknot`、`reknot_abi`、`reknot_macros` の版を `0.1.0-rc.2` にそろえ、
 内部のレジストリ依存も同じ版に固定します。サンプルや生成したアプリの版は
 SDK の版とは独立しています。ソース RC では crates.io への公開は行いません。
 
@@ -45,7 +45,7 @@ dry-run や展開済み配布物への patch を使った検証に成功して�
 ## ソース RC を準備し公開する
 
 GitHub に **ドラフトのプレリリース** を作成します。タイトルは
-`Reknot v0.1.0-rc.1`、タグは `v0.1.0-rc.1`、対象は検証済みコミットの完全な SHA
+`Reknot v0.1.0-rc.2`、タグは `v0.1.0-rc.2`、対象は検証済みコミットの完全な SHA
 とし、以下を記載します。
 
 - ソースの SHA と、その版で成功した CI 実行の URL。
@@ -59,22 +59,22 @@ GitHub に **ドラフトのプレリリース** を作成します。タイト�
 その後の修正は新しい版にします。以下は候補の公開後に使うコマンドです。
 
 ```sh
-git clone --branch v0.1.0-rc.1 --depth 1 https://github.com/exveria1015/reknot.git
+git clone --branch v0.1.0-rc.2 --depth 1 https://github.com/exveria1015/reknot.git
 cd reknot
 cargo run -p typed_bot_host --locked
 ```
 
-`reknot-new` を使うときは、このチェックアウトを保持してください。生成される
-プロジェクトは SDK ソースを path で参照します。この RC では `cargo install` や
-SDK ソース不要の生成ツールは導入経路として扱いません。
-[型付きハンドラー入門](TYPED_HANDLERS.md) を参照してください。
+インストールした `reknot-new` は、チェックアウトを保持せず Git の固定コミットを使えます。
+`cargo install --git ... --rev SHA` と `reknot-new PATH --sdk-rev SHA` に同じ検証済みの完全な SHA を指定します。
+既定のレジストリ経路には別途 crates.io 公開が必要です。[型付きハンドラー入門](TYPED_HANDLERS.md) を参照してください。
 
 ## 制限を明記する
 
 Reknot はローカル開発中の信頼済み Rust コードを対象とします。同じ SDK と互換な
 ターゲット・ツールチェーンでホストとロジックを一緒にビルドしてください。
-型付き API は単一 DLL と Drain に対応し、低レイヤーの Restart とは別です。
-契約バージョンを変えた場合は、文書に従ってホストも再ビルド・再起動します。
+型付き API は単一 DLL、Drain、明示登録したワーカーの Restart に対応します。型付き契約は形式 v2 となり、`JsonSchema` が必要です。
+rc.1 から更新するときはプロトコルの型に `#[reknot::schema]` を付け、ホストとロジックを再ビルドします。
+ハンドラー入出力の契約変更ではホストも再起動し、ワーカーの状態変更には明示的な移行を使います。
 
 既定では DLL をロードしたまま保持し、ロード試行の累積上限は失敗を含めて32回です。
 unsafe な明示回収にはアプリ側の静止性の証明が必要で、回収しても予算は戻りません。

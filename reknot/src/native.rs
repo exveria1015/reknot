@@ -146,14 +146,14 @@ pub(crate) unsafe fn load(path: &Path) -> Result<(HandlerApi, GenerationOwner), 
     // Read only the stable header before accessing the rest of the table.
     let header = pointer.cast::<HandlerHeader>().read();
     if header.abi_version != HANDLER_ABI_VERSION
-        || header.struct_size < std::mem::size_of::<HandlerApi>() as u32
+        || header.struct_size < reknot_abi::services::HANDLER_API_V5_SIZE as u32
     {
         return Err(RouteError::Abi {
             version: header.abi_version,
             size: header.struct_size,
         });
     }
-    let api = pointer.read();
+    let api = HandlerApi::read_compatible(pointer);
     crate::routing::validate(api)?;
     Ok((api, image))
 }
