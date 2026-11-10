@@ -5,12 +5,14 @@ use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
 
 fn directory(label: &str) -> PathBuf {
+    directory_in(PathBuf::from(env!("CARGO_TARGET_TMPDIR")), label)
+}
+fn directory_in(base: PathBuf, label: &str) -> PathBuf {
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let root = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
-        .join(format!("reknot-new-{}-{nonce}-{label}", std::process::id()));
+    let root = base.join(format!("reknot-new-{}-{nonce}-{label}", std::process::id()));
     std::fs::create_dir_all(&root).unwrap();
     root
 }
@@ -141,7 +143,9 @@ fn installed_git_cli_generates_a_portable_static_and_native_application() {
             }
         }
     }
-    let root = directory("installed-git");
+    // Stay outside the extracted-package workspace and its Cargo patches.
+    // A short root also keeps nested native builds within MSVC's path limits.
+    let root = directory_in(std::env::temp_dir(), "cli");
     let sdk = root.join("sdk");
     std::fs::create_dir(&sdk).unwrap();
     let parent = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
