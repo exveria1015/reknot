@@ -1,0 +1,12 @@
+[package]
+name = "reknot_abi"
+version = "0.1.0-rc.1"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Versioned C ABI tables for Reknot handlers, tasks and host services"
+readme = "README.md"
+
+[lib]
+crate-type = ["rlib"]

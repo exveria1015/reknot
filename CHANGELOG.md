@@ -1,12 +1,31 @@
 # Changelog
 
-User-visible changes are recorded here. The project is pre-release; the entries
-below describe unreleased work and do not announce an RC or stable release.
+User-visible changes are recorded here. See the
+[GitHub releases](https://github.com/exveria1015/reknot/releases) for published
+tags and their verification records. A version entry alone does not announce publication.
 
 ## Unreleased
 
+No changes recorded after the first release candidate.
+
+## 0.1.0-rc.1
+
+First Reknot source release candidate. The three SDK crates use `0.1.0-rc.1`;
+the intended tag is `v0.1.0-rc.1`. This candidate uses a source checkout and does
+not claim crates.io availability or a standalone installed project generator.
+See the [release procedure](docs/RELEASING.md) for the final verification gates.
+
 ### Breaking API changes
 
+- Rename flow-reloader to Reknot. The core crates and source directories are now
+  `reknot`, `reknot_abi` and `reknot_macros`; replace former `flow_reload`,
+  `interface` and `hot_macro` dependencies and imports, then rebuild host and logic.
+  The CLI commands are `reknot-new` and `reknot-cache`. The service example uses
+  `REKNOT_ADDR`. Default cache copies now live under `<temp>/reknot/` and use
+  `REKNOT_CACHE_ROOT`; the former `FLOW_RELOAD_CACHE_ROOT` remains a fallback alias.
+  Existing cache data is not moved automatically. Its format marker is retained,
+  so `reknot-cache inspect --root <old-absolute-root>` can inspect previous sessions.
+  The native ABI tables and `hot_handler_api` entry point are unchanged.
 - Use `reload_handler`, `HostResources`, `RequestRouter` and `RequestTask` for
   both native reload and static linking. The earlier runner, direct/snapshot
   macros, attached runtimes and compatibility aliases have been removed.
@@ -21,13 +40,22 @@ below describe unreleased work and do not announce an RC or stable release.
 
 ### Capabilities
 
+- `reknot-new` generates a no-clobber host/logic/protocol project with native/static
+  modes and a bilingual guide. Typed Send + Sync clients connect framework threads
+  to an owner-thread bridge with bounded queues, cancellation and shutdown/join.
+  Windows Cargo paths are normalized before metadata/build to preserve workspace inheritance.
+- Typed `handler` functions and `export_handlers!` module exports, Serde JSON
+  input/results, stable `HandlerHandle`s and explicit contract versions. Single-DLL
+  Drain preserves admitted generations and host state. `DevModule` provides
+  background builds, local dependency watching, stale-result rejection and recovery
+  after failed builds. See `docs/TYPED_HANDLERS.md` for limits and the console bot.
 - Message-boundary Drain and cooperative worker Restart with versioned
   checkpoints, staged factories and a final synchronous host commit hook.
 - Explicit child-task and callback registration, cancellation cleanup and
   join tracking before request completion and Restart.
 - Async host services, bounded threaded I/O, required service bindings and
   typed per-generation initialization data.
-- Native retention diagnostics, managed cache sessions and the `flow-cache`
+- Native retention diagnostics, managed cache sessions and the `reknot-cache`
   inspection / exited-session cleanup CLI.
 - Explicit owner-thread DLL reclamation, host call-return guards, retention reasons,
   retired-generation release and separate close/copy-removal outcomes. Handler ABI 5
@@ -43,7 +71,9 @@ below describe unreleased work and do not announce an RC or stable release.
 
 ### Build and compatibility
 
-- Default features are `native` and `dev-tools`. Logic crates and static hosts
+- Default features are `native`, `dev-tools` and `typed`. Typed logic/static hosts
+  use `default-features = false, features = ["typed"]` (Serde/JSON, no native tooling).
+  Low-level logic crates and static hosts
   can use `default-features = false`; `native` alone omits watch/build helpers.
 - Plain Cargo build/test selects the three core crates. Examples remain
   explicit workspace targets. The workspace lockfile is committed.

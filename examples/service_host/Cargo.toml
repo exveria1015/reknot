@@ -7,10 +7,10 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-flow_reload = { path = "../../flow_reload", default-features = false }
+reknot = { path = "../../reknot", default-features = false }
 service_logic = { path = "../service_logic", optional = true }
 
 [features]
 default = ["reload"]
-reload = ["flow_reload/dev-tools"]
+reload = ["reknot/dev-tools"]
 static-logic = ["dep:service_logic"]

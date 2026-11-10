@@ -1,6 +1,6 @@
 //! cargo run -p contracts_host --locked
 use contracts_protocol::*;
-use flow_reload::*;
+use reknot::*;
 use std::cell::RefCell;
 use std::future::Future;
 use std::path::PathBuf;

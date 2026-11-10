@@ -1,5 +1,7 @@
 # DLL の寿命と管理外タスク
 
+[English](../docs/UNLOAD_SAFETY.md) | 日本語
+
 ## ネイティブ画像の保持
 
 `RequestRouter` が開いた DLL は、既定ではプロセス終了まで保持します。
@@ -82,8 +84,8 @@ SDK は回収の安全性を自動判定する DLL 用終了フックや、世�
 明示回収に成功しても、累積試行数は減りません。
 予算の枯渇後は開発プロセスを再起動してください。メモリ量の上限を保証する仕組みではありません。
 
-コピー先はユーザー一時領域の `flow-reloader/managed-v1/sessions/<SessionId>/copies/` です。
-終了後のコピーは、セッション lease の排他を確認する `flow-cache clean --apply` で掃除します。
+コピー先はユーザー一時領域の `reknot/managed-v1/sessions/<SessionId>/copies/` です。
+終了後のコピーは、セッション lease の排他を確認する `reknot-cache clean --apply` で掃除します。
 これは終了済みセッションのファイル操作であり、実行中コードのアンロードは行いません。
 旧 PID 形式・リンク・不明な対象は自動削除しません。[観測と掃除](RETENTION_AND_CLEANUP.md) に条件をまとめています。
 

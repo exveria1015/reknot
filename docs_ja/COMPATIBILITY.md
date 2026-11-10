@@ -1,6 +1,8 @@
 # 互換性と対象範囲
 
-flow-reloader は、ローカル開発中に信頼済みの Rust ロジックを更新するための、公開前の SDK です。
+[English](../docs/COMPATIBILITY.md) | 日本語
+
+Reknot は、ローカル開発中に信頼済みの Rust ロジックを更新するための、公開前の SDK です。
 リリースまでは Rust API が変わる可能性があります。ネイティブロードと静的リンクでは、
 同じメッセージ API と所有の契約を使います。
 
@@ -23,7 +25,9 @@ CI の設定は検査対象を示すもので、特定の版の成功を保証�
 
 ## API と ABI
 
-入口は `reload_handler`、`HostResources`、`RequestRouter`、`RequestTask` です。
+通常の関数には `handler` / `export_handlers!` と `typed::ModuleHost` を使います。
+ホスト資源や受付を直接制御する低レイヤーの入口は、`reload_handler`、`HostResources`、`RequestRouter`、`RequestTask` です。
+型付き API も同じ ABI と所有の契約に従います。
 ロード方式は Debug／Release と独立して feature で選びます。
 指定方法は [ビルド構成](API_REFERENCE.md#ビルド構成) を参照してください。
 
@@ -42,7 +46,8 @@ API の変更点は [変更履歴](../CHANGELOG.md) を参照してください�
 
 ## アプリケーションが設計すること
 
-- ホスト資源とタスクを所有スレッドで扱うこと。別スレッドから通知できても、タスクや資源ハンドルは移動できません。
+- DLL のタスクとホスト資源を所有スレッドで扱うこと。別スレッドからは型付きの `HandlerClient` で要求を渡せますが、
+  DLL のタスクや資源ハンドル自体を移動することはできません。
 - poll、キャンセル後の後処理、登録した子タスク・コールバックの終了待ちを進めること。
   外部の処理は明示登録し、未登録の独自 spawn を自動発見する前提にしないでください。
 - サービスと状態の形式、キューの上限、停止期限を定義すること。

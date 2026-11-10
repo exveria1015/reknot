@@ -1,8 +1,8 @@
-use flow_reload::{RequestContext, ServiceError, ServiceKey};
+use reknot::{RequestContext, ServiceError, ServiceKey};
 
 const LINE_SESSION: ServiceKey = ServiceKey::new(0x4c49_4e45, 1);
 
-#[flow_reload::reload_handler(LINE_SESSION)]
+#[reknot::reload_handler(LINE_SESSION)]
 async fn handle(request: RequestContext) -> Result<(), ServiceError> {
     // Send "slow\n" to allow a rebuild while this old request is in progress.
     if request.input() == b"slow\n" {

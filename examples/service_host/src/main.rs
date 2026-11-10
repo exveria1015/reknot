@@ -1,6 +1,4 @@
-use flow_reload::{
-    HostResource, HostResources, RequestRouter, RunStatus, ServiceError, ServiceKey,
-};
+use reknot::{HostResource, HostResources, RequestRouter, RunStatus, ServiceError, ServiceKey};
 use std::future::Future;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
@@ -34,21 +32,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(feature = "reload")]
     let (mut router, mut watcher, logic, target, library) = {
         let logic = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../service_logic");
-        let target = flow_reload::development::default_target_dir(&logic);
-        if !flow_reload::development::build_logic("service_logic", &logic, &target)?.success() {
+        let target = reknot::development::default_target_dir(&logic);
+        if !reknot::development::build_logic("service_logic", &logic, &target)?.success() {
             return Err("initial logic build failed".into());
         }
-        let library = flow_reload::development::library_path_in(&target, "service_logic");
+        let library = reknot::development::library_path_in(&target, "service_logic");
         // SAFETY: the local SDK handler and all manually edited replacements are
         // trusted code obeying the handler's copy/retain and task ownership contracts.
         let router = unsafe { RequestRouter::load(&library, host.clone()) }?;
-        let watcher = flow_reload::development::start_source_watcher(&logic);
+        let watcher = reknot::development::start_source_watcher(&logic);
         (router, watcher, logic, target, library)
     };
     #[cfg(all(feature = "static-logic", not(feature = "reload")))]
     // SAFETY: generated callbacks are statically linked and own their request data.
     let router = unsafe { RequestRouter::from_api(service_logic::handler_api(), host.clone()) }?;
-    let address = std::env::var("FLOW_RELOAD_ADDR").unwrap_or_else(|_| "127.0.0.1:4000".into());
+    let address = std::env::var("REKNOT_ADDR").unwrap_or_else(|_| "127.0.0.1:4000".into());
     let listener = TcpListener::bind(address)?;
     println!(
         "Listening on {}. Send newline-terminated text.",
@@ -79,8 +77,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut task = None;
         loop {
             #[cfg(feature = "reload")]
-            if flow_reload::development::source_changed(&mut watcher) {
-                match flow_reload::development::build_logic("service_logic", &logic, &target) {
+            if reknot::development::source_changed(&mut watcher) {
+                match reknot::development::build_logic("service_logic", &logic, &target) {
                     Ok(status) if status.success() => {
                         // Same trusted-source contract as the initial load.
                         let prepared = unsafe { router.prepare(&library) };

@@ -1,6 +1,6 @@
 //! Application-specific SQLite migration. The generic SDK has no SQL dependency.
 pub mod demo;
-use flow_reload::{HostResource, ServiceError};
+use reknot::{HostResource, ServiceError};
 use rusqlite::{Connection, ErrorCode, TransactionBehavior};
 use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard, TryLockError};

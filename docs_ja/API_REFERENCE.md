@@ -1,5 +1,113 @@
 # API リファレンス
 
+[English](../docs/API_REFERENCE.md) | 日本語
+
+## 型付きアプリケーションAPI
+
+通常の関数をホットリロードの入口にする API です。使い始める手順は [型付きハンドラー入門](TYPED_HANDLERS.md) を参照してください。
+ここでは、各 API の契約と上限をまとめます。型付き API は既存の ABI を使い、`typed` feature で有効になります。
+
+### 定義と初期設定
+
+| API | 役割 |
+| --- | --- |
+| `Handler<Input, Output>::new(name, version)` | 安定したハンドラー名と入出力契約の版を定義する |
+| `Module::new(name, version).with(handler)` | 1つの crate／DLL に含めるハンドラーを宣言する |
+| `#[reknot::handler(CONTRACT)]` | 同期・非同期関数から呼び出し口を生成する。必要なら先頭引数に `RequestContext` を取る |
+| `export_handlers!(module(), [handlers])` | crate 内のハンドラーをまとめて公開する。1 crate に1回記述する |
+| `module().builder()` | ホスト資源、サービスの割り当て、同時要求数、Router の設定を組み立てる |
+| `builder.load(path)` / `builder.from_api(api)` | ネイティブ DLL／常駐する関数表から `ModuleHost` を作る。`unsafe` が必要 |
+| `DevModule::start(builder, options)` | 初回ビルド・ロードとソース監視を始める。`unsafe` が必要で、今後の編集と依存先も信頼の対象 |
+| `DevModule::update()` | 変更検出、背景ビルドの結果適用、接続したブリッジ、キャンセル後の終了処理を進める |
+| `reknot-new PATH` | host・logic・protocol のひな形を新しいディレクトリへ生成する CLI。feature `typed` が必要 |
+
+protocol と logic の依存指定は `default-features = false, features = ["typed"]` です。
+logic の `[lib] crate-type` はネイティブなら `["cdylib"]`、静的リンクも使うなら `["cdylib", "rlib"]` にします。
+開発ホストでは既定 feature、または `typed`・`native`・`dev-tools` を有効にします。
+
+### 契約の照合と入出力
+
+候補の検査では、モジュール名・版、ハンドラー名・版、入出力の Rust 型名、実際の export 一覧を照合します。
+一覧の順序は問いません。重複キーと検出できるハッシュ衝突は登録エラーになります。
+識別名は Rust の関数名から自動生成せず、権限の付与にも使いません。
+
+型名の一致は、フィールド・Serde 属性・形式・意味の互換性を保証しません。
+それらを変更したら対応する契約の版を上げ、ホストも再ビルド・再起動します。
+ハンドラーの追加・削除も、ホストとロジックで共有する宣言の更新が必要です。
+
+入出力は `Serialize + DeserializeOwned + 'static` を満たす、所有する値です。
+複数の引数は構造体やタプルにまとめ、値が不要な場合は `()` を使います。
+借用した SDK オブジェクト、`&self`、ジェネリック関数は対象外です。
+
+境界を渡るのはコピーした JSON バイト列です。Rust オブジェクトやそのデストラクタを DLL 間で共有しません。
+JSON で表現できない値や変換失敗はエラーになります。
+戻り値を `Result<Reply, AppError>` にした場合、呼び出しの外側の `Result` が SDK 側の失敗、内側が業務上の結果です。
+ビルド失敗・候補拒否では受付先を維持し、実行時の panic や業務エラーでもイベントを自動再実行しません。
+
+### 呼び出しとスレッド
+
+| API | スレッドと受付の契約 |
+| --- | --- |
+| `ModuleHost::handler(contract)` | 所有スレッドで使う `HandlerHandle` を返す。clone して保持でき、更新時の再登録は不要 |
+| `HandlerHandle::call(input)` | 同期に受付を試み、`Call<Output>` を返す。受付に成功すると、最初の poll より前に世代が確定する |
+| `ModuleHost::bridge(options)` | `ModuleClient` と `BridgeDriver` の組を返す。driver を所有スレッドで poll する |
+| `DevModule::bridge(options)` | driver を `update()` に組み込み、クライアントを返す |
+| `ModuleClient::handler(contract)` | `Send + Sync` の `HandlerClient` を返す。別スレッドのイベント処理へ clone できる |
+| `HandlerClient::call(input)` | 即時にキューへ入れ、`Send` の `RemoteCall<Output>` を返す。世代は所有側の受付時に確定する |
+| `RemoteCall::generation()` | 受付前は `None`。受付後、要求が未完了の間は選ばれた世代を返す |
+
+`ModuleClient` は `Send + Sync` です。`ModuleHost`・`HandlerHandle`・`Call`・`BridgeDriver` は `Send` ではありません。
+Tokio では所有側を `current_thread` または `LocalSet` で動かします。
+フレームワーク固有のイベント変換と送信はホストが担当し、専用アダプターは含みません。
+
+### 容量と受付の上限
+
+| 対象 | 上限・既定値 | 設定 |
+| --- | --- | --- |
+| JSON 入力・出力 | それぞれ1 MiB | `MAX_MESSAGE_BYTES` |
+| モジュール内のハンドラー | 1～64個 | `MAX_HANDLERS` |
+| モジュールの同時要求 | 既定256件 | `module().builder().max_in_flight(n)` |
+| ブリッジの要求枠 | 既定256件。待機・実行・結果未受領の合計 | `BridgeOptions::capacity` |
+| ブリッジの実行中要求 | 既定64件 | `BridgeOptions::max_in_flight` |
+
+ブリッジの上限は正の値とし、`max_in_flight <= capacity` にします。モジュール側の上限も別に適用されます。
+満杯や競合は `Error::Busy` です。自動再試行は行いません。
+受付順は FIFO ですが、完了順は同じとは限りません。実行中のキャンセルでも、登録した子処理が終了するまでは枠を保持します。
+
+`outstanding()` はブリッジの要求枠の使用数です。0でも、DLL を回収できることの証明にはなりません。
+
+### キャンセルと終了
+
+`Call::cancel` / `RemoteCall::cancel` の後も要求を await すると、登録した子処理の終了を待てます。
+結果の完了がキャンセルより先なら、その結果が返る場合があります。Future の Drop もキャンセルを要求します。
+
+| 操作 | 終了時の契約 |
+| --- | --- |
+| `client.close().await` | 新規受付を即時に閉じ、受け付けた処理を完了まで待つ。`HandlerClient` の clone を含め、最後のクライアントの Drop でも受付を閉じる |
+| `client.shutdown().await` | 受付を閉じてキャンセルし、登録した子処理の終了を待つ。対象はそのブリッジの要求だけ |
+| `BridgeDriver` の Drop | 残る要求と終了待ちに `Error::BridgeClosed` を通知する。正常な終了確認にはならず、後処理は `host.poll_cleanup` へ移る |
+| ローカルの `Call` の Drop | 登録した子処理の後処理を、所有スレッドの `poll_cleanup` で続ける |
+
+終了待ち中も driver を poll してください。`DevModule::update()` は接続したブリッジと後処理を駆動します。
+独自・静的ホストでは、Drop 後の処理を `std::future::poll_fn(|cx| host.poll_cleanup(cx)).await` で待てます。
+この `poll_cleanup` は、同じスレッド上のキャンセル済み要求全体を進めます。
+
+停止に応じない子処理があれば終了待ちは続きます。管理外の処理の強制停止や、外部副作用の巻き戻しは行いません。
+
+### 型付きハンドラーからのホストサービス
+
+先頭引数に `RequestContext` を追加し、`ctx.call_service` / `ctx.call_service_async` でサービスを呼び出します。
+ホストは `builder.resources(resources).bind(binding, resource.id())` で割り当て、
+ロジックは `export_handlers!(..., requires = REQUIRED_SERVICES)` で必要なサービスを宣言します。
+組み合わせは [型付きサービスのテスト](../reknot/tests/typed_services.rs) を参照してください。
+
+`ctx.resource()` と `ctx.call()` は型付きの結果受け取りに予約されているため、アプリケーション I/O には使いません。
+初期化データ領域もモジュール契約に使用します。設定は入力またはホストサービスで渡してください。
+子処理は `spawn_child` / `register_activity` の既存契約に従って登録します。
+
+監視とビルドの条件は [開発時の運用](DEVELOPMENT.md)、ネイティブコードの寿命は [DLL の寿命](UNLOAD_SAFETY.md) を参照してください。
+型付き API が対象とするのは単一モジュールの Drain です。複数 DLL の一括更新、構造からの互換性推論、Restart の高レイヤー化は未提供です。
+
 ## メッセージ API
 
 Handler ABI 5、Services ABI 2、タスク制御 ABI 2 を使います。
@@ -7,7 +115,7 @@ Handler ABI 5、Services ABI 2、タスク制御 ABI 2 を使います。
 `retention_snapshot()` は SDK 内のネイティブ参照数・コピー時のファイル長・状態・検証結果と
 直近のコピー削除エラーを値として返し、画像参照を追加保持しません。メモリ量・予算使用数とは別です。
 `inspect_cache(&CacheOptions)`／`clean_cache(&CacheOptions)` はコピー専用ルートを検査し、
-clean は `apply=true` の場合だけ適格な終了済みセッションを削除します。CLI は `flow-cache` です。
+clean は `apply=true` の場合だけ適格な終了済みセッションを削除します。CLI は `reknot-cache` です。
 [管理単位・排他・限界](RETENTION_AND_CLEANUP.md) を参照してください。
 
 既定の KeepLoaded に加え、終了条件を確認できるホストは `unsafe reclaim_native_image(ArtifactId)` で
@@ -23,7 +131,7 @@ Handler ABI と累積ロード予算の意味は変わりません。
 `call_async` は対応するホストでこの通知を自動利用します。
 任意のTLSや依存先固有の終了は対象外です。[責任範囲と使い方](MANAGED_LOCALS_AND_NOTIFICATIONS.md) を参照してください。
 
-推奨する API は資源の所有・処理の受付・世代付き実行を分離します。
+メッセージ API は、資源の所有・処理の受付・世代付き実行を分離します。
 
 ### 資源とロジック
 
@@ -42,11 +150,11 @@ Resource<T> の Drop だけでは登録を消しません。失効後も型付�
 所有スレッド上の信頼済みコード間のハンドルであり、悪意のある DLL の権限隔離ではありません。
 
 ```rust
-use flow_reload::{RequestContext, ServiceError, ServiceKey};
+use reknot::{RequestContext, ServiceError, ServiceKey};
 const SERVICE: ServiceKey = ServiceKey::new(1, 1);
 const STATE: ServiceKey = ServiceKey::new(2, 1);
 
-#[flow_reload::reload_handler(SERVICE, state = STATE)]
+#[reknot::reload_handler(SERVICE, state = STATE)]
 async fn worker(ctx: RequestContext) -> Result<(), ServiceError> {
     let saved = ctx.checkpoint().ok_or(ServiceError::INVALID_ARGUMENT)?;
     ctx.cancelled().await;
@@ -147,9 +255,9 @@ Router 再作成時も同じ予算を共有でき、used()・limit() で確認�
 
 ## ビルド構成
 
-既定で `native` と `dev-tools` を有効にします。`native` は DLL ロード・保持量観測・コピー掃除、
-`dev-tools` は `flow_reload::development` のソース監視・Cargo ビルド補助を提供します。
-`native` だけを指定した構成には監視機能を含めません。`flow-cache` は `native` が必要です。
+既定で `typed`・`native`・`dev-tools` を有効にします。`typed` はSerde JSONによる型付きハンドラー、`native` は DLL ロード・保持量観測・コピー掃除、
+`dev-tools` は `reknot::development` のソース監視・Cargo ビルド補助を提供します。
+`native` だけを指定した構成には監視機能を含めません。`reknot-cache` は `native` が必要です。
 ロジック crate と静的リンクのホストでは `default-features = false` を指定してください。
 
 | 構成 | 依存の指定 | 含まれる機能 |
@@ -157,6 +265,7 @@ Router 再作成時も同じ予算を共有でき、used()・limit() で確認�
 | 開発ホスト | 既定 feature | DLL ロード・保持量観測・コピー掃除、ビルド・監視補助 |
 | 外部で成果物をビルドするホスト | `default-features = false, features = ["native"]` | DLL ロード・保持量観測・コピー掃除 |
 | ロジック crate・静的ホスト | `default-features = false` | サービス・タスク・ルーティング・ハンドラー生成 |
+| 型付きロジック・静的ホスト | `default-features = false, features = ["typed"]` | 型付き入出力・モジュール契約。ネイティブ依存なし |
 
 ロード方式と Debug／Release は独立しています。
 

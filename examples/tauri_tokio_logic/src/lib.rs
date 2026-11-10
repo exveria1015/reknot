@@ -1,4 +1,4 @@
-use flow_reload::{RequestContext, ServiceError, ServiceKey};
+use reknot::{RequestContext, ServiceError, ServiceKey};
 use serde::{Deserialize, Serialize};
 
 // Edit these constants, save, and watch the running window change.
@@ -67,7 +67,7 @@ fn publish(
     Ok(())
 }
 
-#[flow_reload::reload_handler(VIEW, state = COUNTER)]
+#[reknot::reload_handler(VIEW, state = COUNTER)]
 async fn update(ctx: RequestContext) -> Result<(), ServiceError> {
     if ctx.input() == b"worker" {
         let saved = ctx.checkpoint().ok_or(ServiceError::INVALID_ARGUMENT)?;

@@ -1,5 +1,31 @@
 # テストと Miri
 
+[English](../docs/TESTING.md) | 日本語
+
+## 型付きハンドラー
+
+```sh
+cargo test -p reknot --no-default-features --features typed --test typed_handlers --test typed_services --test typed_bridge --locked
+cargo test -p reknot --test native_typed --locked -- --ignored --test-threads=1
+cargo test -p reknot --test scaffold --locked -- --include-ignored
+cargo test -p typed_bot_host --no-default-features --features static-logic --locked
+cargo run -p typed_bot_host --example framework_bridge --no-default-features --features static-logic --locked
+```
+
+静的テストはpoll前の世代固定、複数入口、契約拒否、ホスト状態・失効、サイズ・同時要求上限、
+panicの報告、子処理・キャンセル後の終了待ちを検査します。compile-fail doctestは型不一致・借用入力・Send制約を扱います。
+実DLLテストは隔離プロジェクトでローカル依存先の編集、旧要求と新版の共存、ビルド失敗からの保存による復旧、
+契約変更の拒否、追加編集による古い候補の破棄、新しいローカル依存先の追加と監視、出力による監視の再発火がないことを確認します。
+別スレッドから旧世代へ渡した要求を切り替え後にキャンセルし、登録したネイティブ子処理の終了も待ちます。
+ブリッジ試験は実スレッド、FIFO受付、未受領結果を含む容量、待機中・実行中のキャンセル、
+複数の終了待ち、所有側の破棄、結果通知Wakerのpanic後の継続を確認します。
+生成器は既存ディレクトリ拒否・不正入力を検査し、ignored試験では生成物をビルド・起動して
+静的／ネイティブ構成を確認します。実行中の編集保存で新版に切り替わり、ホストの件数が残ることも検査します。
+配布物検査でも展開済みアーカイブから同じ生成・実行試験を行います。
+1MiBのサイズ境界は通常実行で検査し、Miriでは小さい入力で所有・FFIの経路を検査します。
+Miriスクリプトにも両借用モデルの `typed-handlers` / `typed-services` / `typed-bridge` を追加しています。
+構造体の自動互換性判定、フレームワーク固有のSDK接続、DLL自動回収、OS通知の配達保証を検証するものではありません。
+
 ## テストの役割
 
 | 対象 | 確認するもの |
@@ -50,12 +76,12 @@ python scripts/check-docs.py
 
 ```powershell
 cargo fmt --all -- --check
-rustfmt --edition 2021 --check flow_reload/tests/fixtures/handler.rs flow_reload/tests/fixtures/abi_v5.rs flow_reload/tests/fixtures/reclamation.rs flow_reload/tests/fixtures/managed_logic.rs
-cargo clippy -p interface -p hot_macro -p flow_reload --all-targets --locked -- -D warnings
-cargo clippy -p interface -p hot_macro -p flow_reload --all-targets --all-features --locked -- -D warnings
-cargo test -p interface -p hot_macro -p flow_reload --locked
+rustfmt --edition 2021 --check reknot/tests/fixtures/handler.rs reknot/tests/fixtures/abi_v5.rs reknot/tests/fixtures/reclamation.rs reknot/tests/fixtures/managed_logic.rs
+cargo clippy -p reknot_abi -p reknot_macros -p reknot --all-targets --locked -- -D warnings
+cargo clippy -p reknot_abi -p reknot_macros -p reknot --all-targets --all-features --locked -- -D warnings
+cargo test -p reknot_abi -p reknot_macros -p reknot --locked
 cargo test --workspace --exclude tauri_tokio --all-features --locked
-cargo test -p interface -p hot_macro -p flow_reload --release --all-features --locked
+cargo test -p reknot_abi -p reknot_macros -p reknot --release --all-features --locked
 ```
 
 GUI のバックエンドとフロントエンド構文は別に確認します。テストは通常の GUI ソースを編集せず、ウィンドウも開きません。
@@ -99,7 +125,7 @@ DB は `target/` 内に新規作成し、既存アプリの DB は使用しま�
 ## 保持量とコピーの掃除
 
 ```powershell
-cargo test -p flow_reload --test cache_lifecycle --locked -- --test-threads=1
+cargo test -p reknot --test cache_lifecycle --locked -- --test-threads=1
 ```
 
 `target/tmp/cache-lifecycle-tests/` 内の独立したルートで、ホスト子プロセスと実 CLI を動かします。
@@ -138,9 +164,9 @@ Windows ローカルの成功を Linux や実 GUI の確認結果として扱い
 ## 静的構成と native 単独構成
 
 ```sh
-cargo clippy -p flow_reload --all-targets --no-default-features --locked -- -D warnings
-cargo test -p flow_reload --no-default-features --locked
-cargo check -p flow_reload --no-default-features --features native --locked
+cargo clippy -p reknot --all-targets --no-default-features --locked -- -D warnings
+cargo test -p reknot --no-default-features --locked
+cargo check -p reknot --no-default-features --features native --locked
 cargo test -p service_host --release --no-default-features --features static-logic --locked
 cargo tree -p service_host --no-default-features --features static-logic --edges normal --locked
 ```

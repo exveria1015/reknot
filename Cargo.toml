@@ -1,10 +1,13 @@
 [workspace]
 members = [
-    "interface",
-    "hot_macro",
-    "flow_reload",
+    "reknot_abi",
+    "reknot_macros",
+    "reknot",
     "examples/service_logic",
     "examples/service_host",
+    "examples/typed_bot_protocol",
+    "examples/typed_bot_logic",
+    "examples/typed_bot_host",
     "examples/threaded_io_logic",
     "examples/threaded_io_host",
     "examples/contracts_logic",
@@ -18,11 +21,11 @@ members = [
     "examples/tauri_tokio_logic",
     "examples/tauri_tokio/src-tauri",
 ]
-default-members = ["interface", "hot_macro", "flow_reload"]
+default-members = ["reknot_abi", "reknot_macros", "reknot"]
 resolver = "2"
 
 [workspace.package]
 edition = "2021"
 rust-version = "1.95"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/exveria1015/flow-reloader"
+repository = "https://github.com/exveria1015/reknot"

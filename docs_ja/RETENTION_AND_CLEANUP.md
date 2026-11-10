@@ -1,5 +1,7 @@
 # 保持量の観測とコピーの掃除
 
+[English](../docs/RETENTION_AND_CLEANUP.md) | 日本語
+
 ホスト内の DLL 参照の観測、プロセス寿命のセッション管理、明示的なコピー掃除を提供します。
 ネイティブ画像は既定ではプロセス終了まで保持し、ロード予算と Handler ABI 5 の契約を維持します。
 終了条件を確認できるホスト向けの明示回収は [DLL の寿命](UNLOAD_SAFETY.md) を参照してください。
@@ -7,7 +9,7 @@
 ## ホストで観測する
 
 ```rust,ignore
-let snapshot = flow_reload::retention_snapshot();
+let snapshot = reknot::retention_snapshot();
 println!("native_images={} recorded_copy_bytes={}",
     snapshot.tracked_native_images, snapshot.recorded_copy_bytes);
 for image in snapshot.images {
@@ -40,23 +42,23 @@ SDKが管理する通知と登録値の範囲は [登録型TLSとホスト所有
 リポジトリのルートで実行します。
 
 ```powershell
-cargo run -p flow_reload --bin flow-cache --locked -- inspect
-cargo run -p flow_reload --bin flow-cache --locked -- clean
-cargo run -p flow_reload --bin flow-cache --locked -- clean --apply
+cargo run -p reknot --bin reknot-cache --locked -- inspect
+cargo run -p reknot --bin reknot-cache --locked -- clean
+cargo run -p reknot --bin reknot-cache --locked -- clean --apply
 ```
 
 `inspect` と `--apply` のない `clean` は読み取りだけです。欠けた管理ファイルを作成せず、削除もしません。
 apply は表示済みの計画を信用せず、その時点で再検査します。
 外部 CLI は実行中の他プロセスのメモリ量や保持画像数を取得しません。
 
-既定のルートは `<temp>/flow-reloader/` です。ホストを起動する前に `FLOW_RELOAD_CACHE_ROOT` で
+既定のルートは `<temp>/reknot/` です。ホストを起動する前に `REKNOT_CACHE_ROOT` で
 専用のローカル絶対パスを指定できます。SDK 実体は最初のネイティブロード時にルートを確定します。
 CLI／API では `--root`／`CacheOptions::root` で同じルートを指定してください。
 相対パス、`..`、リンク・junction 等を経由するルートは拒否します。
 
 ```powershell
-cargo run -p flow_reload --bin flow-cache --locked -- inspect --root C:\scratch\flow-cache
-cargo run -p flow_reload --bin flow-cache --locked -- clean --apply --max-sessions 100 --max-entries 10000
+cargo run -p reknot --bin reknot-cache --locked -- inspect --root C:\scratch\reknot-cache
+cargo run -p reknot --bin reknot-cache --locked -- clean --apply --max-sessions 100 --max-entries 10000
 ```
 
 既定上限はセッション1024件、ディレクトリ項目65536件です。未知・旧形式の走査も項目上限に含めます。
@@ -75,6 +77,18 @@ cargo run -p flow_reload --bin flow-cache --locked -- clean --apply --max-sessio
 
 CLI の終了コードは0が完全な走査・操作、1が引数・ルート・ロック等のエラー、2が部分集計・部分失敗です。
 正常な InUse／Legacy のスキップはエラーではありません。
+
+## flow-reloader からの移行
+
+既定のキャッシュルートは `<temp>/reknot/` に変わりました。
+従来の `<temp>/flow-reloader/` にあるファイルは、自動で移動・削除しません。
+そのディレクトリを調べる場合は `reknot-cache inspect --root <旧ルートの絶対パス>` で明示します。
+掃除する場合は、同じルートに対して `clean --apply` を使います。従来と同じ lease・権限の検査を通った
+適格な管理対象セッションだけを削除します。
+
+保存済みの `managed-v1` 形式と識別子は変更していません。
+`REKNOT_CACHE_ROOT` が未設定なら、旧変数 `FLOW_RELOAD_CACHE_ROOT` も互換用の別名として使えます。
+両方を設定した場合は `REKNOT_CACHE_ROOT` を優先します。
 
 ## セッションと排他
 
@@ -111,7 +125,7 @@ Windows の [DACL 設定 API](https://learn.microsoft.com/en-us/windows/win32/ap
 ## 検証
 
 ```powershell
-cargo test -p flow_reload --test cache_lifecycle --locked -- --test-threads=1
+cargo test -p reknot --test cache_lifecycle --locked -- --test-threads=1
 ```
 
 親ホスト・子ホスト・掃除 CLI を別プロセスにした試験で、次を検査します。

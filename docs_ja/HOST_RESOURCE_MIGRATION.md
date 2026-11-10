@@ -1,5 +1,7 @@
 # ホスト資源・DB の移行
 
+[English](../docs/HOST_RESOURCE_MIGRATION.md) | 日本語
+
 `restart_with_commit(candidate, migrate_checkpoint, commit)` と、SQLite＋ホスト内キャッシュを
 同時に切り替える実 DLL サンプルを提供します。SQL・排他・復旧方針はアプリケーションが所有します。
 コアに DB 依存や汎用マイグレーション機構は追加していません。Handler ABI 5 は変更ありません。

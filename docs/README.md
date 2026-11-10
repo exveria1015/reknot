@@ -1,43 +1,93 @@
-# Documentation
+# Reknot
 
-Use the message API for native reload and statically linked logic. Start with
-the getting-started guide, then read the contracts relevant to your host.
+English | [日本語](../docs_ja/README.md) · [Documentation index](INDEX.md)
 
-## Start and integrate
+**Edit and try Rust logic while your application keeps running.**
 
-| Guide | Purpose |
+Reknot (formerly flow-reloader) is a hot-reload SDK for local development.
+Keep connections, UI and state in the host, and put the code you want to change in a separate logic crate.
+Save an edit to the logic; once the build and contract checks succeed, new work uses the updated code.
+
+For example, you can adjust a bot's replies or input checks without reconnecting.
+Write handlers as ordinary Rust functions, then register them with an attribute.
+
+## Try it
+
+With Rust 1.95 or later and Cargo installed, run this command from the repository root.
+Start with the console bot, which needs no external account or token.
+
+```sh
+cargo run -p typed_bot_host --locked
+```
+
+After the initial build, wait for `Typed bot ready.`, then try the following:
+
+1. Enter `hello`. The reply is `logic-v1 / message 1: HELLO`.
+2. In the [logic source](../examples/typed_bot_logic/src/lib.rs), change `logic-v1` to `logic-v2` and save.
+3. Wait for `New events use generation ...`, then enter another message. The reply now uses `logic-v2`.
+
+Enter `/summary` to see up to the last 100 input messages. The history stays in the host across logic updates.
+Enter `/quit` to exit.
+
+If a build fails, the running logic stays in use. Fix the error and save to retry.
+
+## Create your own application
+
+Generate a starter project from the repository root:
+
+```sh
+cargo run -p reknot --bin reknot-new --locked -- ../my-bot
+cd ../my-bot
+cargo run
+```
+
+Choose a new directory as the destination. Commit the `Cargo.lock` created on the first run,
+then use `cargo run --locked` for subsequent runs.
+
+The project has three crates, each with a separate role:
+
+| Location | What belongs here |
 | --- | --- |
-| [Getting started](GETTING_STARTED.md) | Run the TCP example and split host/logic ownership |
-| [Examples](../examples/README.md) | Select a native, static, game, database or GUI sample |
-| [API reference](API_REFERENCE.md) | Resources, routing, workers, limits and build configurations |
-| [Compatibility and scope](COMPATIBILITY.md) | Toolchains, platforms, ABI and application responsibilities |
-| [Managed locals and notifications (Japanese)](../docs_ja/MANAGED_LOCALS_AND_NOTIFICATIONS.md) | Generation-local values, host notifications and dependency cleanup boundaries |
-| [Tauri GUI lab](TAURI_GUI_LAB.md) | Edit Rust in the English UI and compare Drain/Restart |
+| `logic` | Replies, calculations and other behavior you want to edit and try |
+| `protocol` | Shared input/output types, handler identities and contract versions |
+| `host` | Connections, event registration, persistent state and the update loop |
 
-## Operate and verify
+Start by changing a reply in `logic/src/lib.rs` and saving.
+In the generated application, `/count` shows the number of input messages.
+The [typed-handler guide](TYPED_HANDLERS.md) explains the SDK source path and how to write handlers.
 
-| Guide | Purpose |
-| --- | --- |
-| [Development operation](DEVELOPMENT.md) | Build, cutover, recovery and retained DLLs |
-| [Troubleshooting](TROUBLESHOOTING.md) | Errors and recovery paths |
-| [Testing](TESTING.md) | Test roles, reproducible commands, Miri and verification limits |
-| [Contributing](../CONTRIBUTING.md) | Source layout and change/documentation conventions |
-| [Changelog](../CHANGELOG.md) | User-visible changes and breaking APIs |
+## What changes during an update
 
-## Detailed contracts in Japanese
+The typed API updates one crate/DLL as a unit.
+Its handlers and helper functions run from the same version of the code. A loaded version of the logic is called a **generation**.
 
-| Guide | Purpose |
-| --- | --- |
-| [Architecture](../docs_ja/ARCHITECTURE.md) | Ownership and update boundaries |
-| [Resources and Drain](../docs_ja/HOST_RESOURCES_AND_ROUTING.md) | Service contracts and admission cutover |
-| [Restart and migration](../docs_ja/RESTART_AND_MIGRATION.md) | Shutdown, staged workers and checkpoints |
-| [Managed children/callbacks](../docs_ja/MANAGED_ACTIVITIES.md) | Explicit registration, join and cancellation cleanup |
-| [Async services and threads](../docs_ja/ASYNC_SERVICES_AND_THREADS.md) | Bounded host I/O, FIFO and owner threads |
-| [Service contracts and typed init](../docs_ja/SERVICE_CONTRACTS_AND_INIT.md) | Explicit bindings and generation-owned configuration |
-| [Host resource / DB migration](../docs_ja/HOST_RESOURCE_MIGRATION.md) | Commit hooks, SQLite transactions and recovery |
-| [Retention and cache cleanup](../docs_ja/RETENTION_AND_CLEANUP.md) | Native diagnostics and exited-session cleanup |
-| [Ownership and lifetimes](../docs_ja/LIFETIME_REVIEW.md) | Future, Waker, data and code lifetimes |
-| [DLL lifetime](../docs_ja/UNLOAD_SAFETY.md) | Retained code and unmanaged work contracts |
-| [Bevy game sample](../docs_ja/BEVY_GAME.md) | Frame boundaries, worker Restart and stale result rejection |
+After a switch, requests already admitted continue to completion on the old generation.
+This is **Drain**. The entry points registered with the host stay in place and route later work to the new generation.
+For calls queued from another thread, the owner thread selects the generation when it admits the request for execution.
 
-[Project overview](../README.md) · [日本語ドキュメント](../docs_ja/README.md)
+The lower-level API also provides **Restart**, which stops registered workers and recreates them from saved state.
+See [Restart and state migration](RESTART_AND_MIGRATION.md) when you need it.
+The typed API currently supports Drain.
+
+## Before you use it
+
+This SDK is under development and intended for trusted local Rust code. Its Rust API may change.
+Build the host and logic against the same SDK. See [compatibility and scope](COMPATIBILITY.md) for supported environments.
+
+When input/output formats or meanings change, increment the shared contract version and restart the host too.
+The SDK does not infer compatibility when fields change under the same Rust type name.
+
+DLLs stay loaded by default. The default budget is 32 cumulative load attempts, including failed native loads.
+Restart the development host when the budget is exhausted. [Explicit DLL reclamation](UNLOAD_SAFETY.md) is available,
+but unloading is not automatic, and running work or external effects are not rolled back.
+
+## Read next
+
+- [Typed handlers](TYPED_HANDLERS.md) — Understand the generated code and add handlers.
+- [Troubleshooting](TROUBLESHOOTING.md) — Check why an update, call or shutdown is not completing.
+- [Documentation by task](INDEX.md) — Find framework integration, state migration and internal design guides.
+
+## License
+
+Choose either the [MIT License](../LICENSE-MIT) or [Apache License 2.0](../LICENSE-APACHE).
+The SPDX expression is `MIT OR Apache-2.0`.

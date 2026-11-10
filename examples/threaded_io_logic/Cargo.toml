@@ -13,4 +13,4 @@ crate-type = ["cdylib", "rlib"]
 version_two = []
 
 [dependencies]
-flow_reload = { path = "../../flow_reload", default-features = false }
+reknot = { path = "../../reknot", default-features = false }

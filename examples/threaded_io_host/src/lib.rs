@@ -1,6 +1,6 @@
 //! cargo run -p threaded_io_host --locked
 //! Real DLLs and TCP; two local logic executors share one host-owned I/O thread.
-use flow_reload::*;
+use reknot::*;
 use std::cell::RefCell;
 use std::future::Future;
 use std::io::{Read, Write};

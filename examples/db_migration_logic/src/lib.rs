@@ -1,4 +1,4 @@
-use flow_reload::{RequestContext, ServiceError, ServiceKey, ServiceRequirement};
+use reknot::{RequestContext, ServiceError, ServiceKey, ServiceRequirement};
 use std::task::Poll;
 const SESSION: ServiceKey = ServiceKey::new(0x4442_5345, 1);
 const STATE: ServiceKey = ServiceKey::new(0x4442_5354, 1);
@@ -9,7 +9,7 @@ const DB_VERSION: u32 = if cfg!(feature = "version_two") && !cfg!(feature = "com
 };
 const DB: ServiceKey = ServiceKey::new(0x4442_4d47, DB_VERSION);
 
-#[flow_reload::reload_handler(SESSION, state = STATE, requires = &[ServiceRequirement::new(1, DB)])]
+#[reknot::reload_handler(SESSION, state = STATE, requires = &[ServiceRequirement::new(1, DB)])]
 async fn logic(ctx: RequestContext) -> Result<(), ServiceError> {
     if ctx.input() == b"worker" {
         let state = ctx.checkpoint().ok_or(ServiceError::INVALID_ARGUMENT)?;

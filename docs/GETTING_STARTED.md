@@ -1,29 +1,48 @@
-# Getting started
+# Integrate through the lower-level API
 
-## Run an existing example
+English | [日本語](../docs_ja/GETTING_STARTED.md)
 
-From the workspace root:
+Use this guide when you want to control host resource registration and the timing of loads and cutovers.
+To write ordinary functions and let the SDK handle input/output conversion and updates on save, use the [typed-handler guide](TYPED_HANDLERS.md).
+
+## Keep a connection alive across updates
+
+With Rust and Cargo installed, run this command from the repository root.
+See [compatibility and scope](COMPATIBILITY.md) for required versions and environments.
 
 ```sh
 cargo run -p service_host --locked
 ```
 
-Connect to `127.0.0.1:4000` with a TCP client and send newline-terminated messages.
-Edit the response label in [service_logic](../examples/service_logic/src/lib.rs),
-save it, then send another message on the **same connection**. The host rebuilds
-logic and switches new admissions after a successful load. `slow\n` takes about
-five seconds, allowing an old request to remain active during a Drain cutover.
+Connect a TCP client to `127.0.0.1:4000` and send newline-terminated text.
+Change the reply label in the [logic source](../examples/service_logic/src/lib.rs), save, then send another message on the same connection.
+The response comes from the new code.
 
-This is a single-connection example. Builds are synchronous, and edits while
-waiting for input are processed at the next message boundary. Use the
-[Tauri GUI lab](TAURI_GUI_LAB.md) for an editor and background builds,
-or `cargo run -p flow_reload --example restart --locked` for a minimal migration example.
+Sending `slow` followed by a newline starts a request that takes about five seconds. Update during that request to see old code continue running.
 
-## Split a new application
+This sample handles one connection and builds synchronously.
+It processes changes at message boundaries and while polling a request, so it does not switch while idle waiting for input.
+For editing and reloading in a window, see the [Tauri GUI lab](TAURI_GUI_LAB.md).
+To try stopping and recreating workers, see the [Restart guide](RESTART_AND_MIGRATION.md).
 
-Create a long-lived host binary and a logic `cdylib`. Both depend on the local
-`flow_reload` crate. The message host does not need a static dependency on the
-logic crate. For example, a logic crate at `examples/my_logic` can use:
+## Separate the host and logic
+
+Make the host a long-lived executable and the logic a replaceable library.
+Both depend on the same `reknot` SDK.
+
+| Component | What it owns |
+| --- | --- |
+| Host | Sockets, databases, persistent state, request admission and task polling |
+| Logic | Input-dependent behavior and calls to operations exposed by the host |
+
+Do not pass the host's Rust objects themselves into the DLL.
+Share service IDs, versions, operation numbers and input/output byte formats between the two sides.
+Matching IDs do not automatically validate the meaning of the data.
+
+### Create the logic crate
+
+For example, a crate at `examples/my_logic` can use this Cargo.toml.
+Add the new crate to the workspace's `members`.
 
 ```toml
 [package]
@@ -35,50 +54,68 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
-flow_reload = { path = "../../flow_reload", default-features = false }
+reknot = { path = "../../reknot", default-features = false }
 ```
 
-Add the crate to workspace members. Define service IDs, versions, operations and
-byte encodings shared by host and logic. Increment the contract version when its
-meaning changes; matching IDs alone do not validate an encoding.
+In native mode, the host does not need a static dependency on the logic crate.
+It loads the built library at runtime.
 
-The logic handler receives owned input and an opaque resource ID:
+## Call a host operation
+
+This handler passes its input to host operation 0:
 
 ```rust
-use flow_reload::{RequestContext, ServiceError, ServiceKey};
+use reknot::{RequestContext, ServiceError, ServiceKey};
+
 const SESSION: ServiceKey = ServiceKey::new(0x4c49_4e45, 1);
 
-#[flow_reload::reload_handler(SESSION)]
+#[reknot::reload_handler(SESSION)]
 async fn handle(ctx: RequestContext) -> Result<(), ServiceError> {
     ctx.call(0, ctx.input(), &mut [])?;
     Ok(())
 }
 ```
 
-On the host, implement `HostResource::call` with short, nonblocking operations,
-register it in `HostResources`, and keep actual sockets, framing and I/O in the
-host. Operation 0 above must be defined by that implementation, for example as
-placing bytes in a bounded outgoing queue. Use
-[service_host](../examples/service_host/src/main.rs) as the complete host example.
+Define operation 0 in the host. It might copy the input into a bounded send queue.
+Keep `HostResource::call` short and nonblocking.
+Socket reads, writes and message framing belong in the host.
 
-Load the built artifact with `unsafe RequestRouter::load(path, resources)`.
-The unsafe boundary requires trusted SDK-compatible native code, including all
-future replacements and module initialization. `dispatch(resource.id(), input)`
-returns a thread-bound Future; the host must poll it. Input is copied before
-`dispatch` returns. The resource registry and code generation stay alive through
-owned handles; the socket itself never crosses the DLL boundary.
+See [service_host](../examples/service_host/src/main.rs) for a complete host,
+and [host resources and admission](HOST_RESOURCES_AND_ROUTING.md) for service registration.
 
-## Select an update policy
+## Load and call the logic
 
-- **Drain**: build, `unsafe prepare(path)`, then `activate(candidate)`. Existing
-  tasks keep their generation. New requests use the new handler. Service and
-  checkpoint schema contracts must match.
-- **Restart**: register long-lived work using `start_worker`, publish explicit
-  checkpoints, and use `restart(candidate, migrate)`. The host continues polling
-  externally owned tasks while Restart waits for shutdown. Only registered workers
-  are recreated; ordinary requests are not replayed.
+Set up the host in this order:
 
-See the detailed [routing](../docs_ja/HOST_RESOURCES_AND_ROUTING.md) and
-[Restart](../docs_ja/RESTART_AND_MIGRATION.md) contracts before integrating workers.
+1. Register resources in `HostResources`.
+2. Load the logic with `unsafe RequestRouter::load(path, resources)`.
+3. Submit work with `dispatch(resource.id(), input)` and poll the returned future.
 
-For static linking and feature selection, see [build configurations](API_REFERENCE.md#build-configurations).
+`dispatch` copies the input and retains access to the selected code generation and resource.
+The host is responsible for driving the future.
+
+The `unsafe` loading contract requires the native code to obey SDK rules, including initialization, finalization and callbacks.
+Apply the same conditions to future replacements. See [compatibility and scope](COMPATIBILITY.md).
+
+## Choose a cutover mode
+
+### Switch between requests: Drain
+
+Prepare a candidate with `unsafe prepare(path)`, then make it the new admission target with `activate(candidate)`.
+Existing requests continue on the old generation; newly admitted requests use the new one.
+Service contracts and state schemas must match.
+
+See [host resources and Drain](HOST_RESOURCES_AND_ROUTING.md) for the detailed sequence.
+
+### Recreate persistent workers: Restart
+
+Register workers with `start_worker` and explicitly save the required state in checkpoints.
+`restart(candidate, migrate)` waits for cooperative shutdown, transforms the state and recreates the workers.
+
+Keep polling ordinary host-owned tasks while shutdown is pending.
+Only registered workers are recreated. Ordinary requests are not automatically replayed.
+[Restart and state migration](RESTART_AND_MIGRATION.md) also explains recovery after failure.
+
+See [build configurations](API_REFERENCE.md#build-configurations) for static linking and feature selection.
+
+[Project README](README.md) · [Documentation index](INDEX.md)

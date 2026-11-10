@@ -1,0 +1,137 @@
+# {{package}}
+
+[English](#english) | [日本語](#日本語)
+
+## English
+
+This starter lets you edit Rust reply logic while the host keeps running.
+Start the application, then try updating the logic.
+
+### Start the application
+
+Run from the directory containing this README:
+
+```sh
+cargo run
+```
+
+After the initial build, wait for `Ready.`, then enter some text.
+Use `/count` to see the input count and `/quit` to exit.
+
+Commit the `Cargo.lock` created on the first run. Use `cargo run --locked` for subsequent runs.
+
+### Change a reply
+
+In the [logic](logic/src/lib.rs), change `logic-v1` to `logic-v2` and save.
+After `New events use generation ...` appears, enter text to see the new reply.
+The input count held by the host stays intact.
+
+A failed build leaves the running logic in place. Fix the error and save to retry.
+
+### Know where to edit
+
+| File | What belongs here |
+| --- | --- |
+| [logic/src/lib.rs](logic/src/lib.rs) | Replies, calculations and other frequently edited behavior and helpers |
+| [protocol/src/lib.rs](protocol/src/lib.rs) | Input/output types, handler identities and contract versions |
+| [host/src/main.rs](host/src/main.rs) | Connections, persistent state, event registration and the update loop |
+
+When input/output formats or meanings change, increment the corresponding contract version and rebuild/restart the host too.
+The SDK does not automatically infer compatibility when fields change under the same type name.
+Adding or removing handlers, or changing the host, also requires a host rebuild and restart.
+
+### Connect to a framework
+
+The host's `HandlerClient` is `Send + Sync`. Clone it into event handlers and call
+`reply.call(message).await`. Convert SDK-specific events into input data in the host,
+and send the returned results from the host too. Discord-specific connections and token configuration are not included.
+
+Keep the update loop running on the DLL's owner thread while waiting for results.
+Queueing does not select a generation; the owner thread selects it when dequeuing and admitting the request for execution.
+Requests rejected for capacity are neither executed nor retried automatically.
+
+The update loop must also run during shutdown waits. The generated host uses `select!` to drive both.
+Cancellation waits for registered children to finish. It does not automatically manage custom unregistered spawn tasks or roll back external effects.
+
+### Run without watching sources
+
+Static linking builds the logic together with the host. Rebuild and restart the application after changes.
+
+```sh
+cargo run --no-default-features --features static-logic --locked
+```
+
+### SDK source path and load limit
+
+[Cargo.toml](Cargo.toml) points to the local SDK source used to generate this project.
+If you move the SDK, update `workspace.dependencies.reknot.path` too.
+
+Native DLLs remain loaded by default. The default limit is 32 cumulative load attempts, including failed native loads.
+Restart the development host when the limit is reached. DLL reclamation does not refund consumed slots.
+
+## 日本語
+
+このプロジェクトは、ホストを動かしたまま Rust の返信処理を編集するためのひな形です。
+まず起動して、ロジックの更新を試してください。
+
+### 起動する
+
+この README があるディレクトリで実行します。
+
+```sh
+cargo run
+```
+
+初回ビルドが終わって `Ready.` と表示されたら、文字を入力してください。
+`/count` で入力件数を確認でき、`/quit` で終了します。
+
+初回に作られる `Cargo.lock` もバージョン管理します。以降は `cargo run --locked` で起動できます。
+
+### 返信を変える
+
+[ロジック](logic/src/lib.rs) の `logic-v1` を `logic-v2` に変えて保存します。
+`New events use generation ...` と表示された後に入力すると、新しい返信になります。
+ホストが持つ入力件数は、そのまま残ります。
+
+ビルドに失敗すると、動作中のロジックを維持します。エラーを直して保存すれば再試行します。
+
+### 編集する場所
+
+| ファイル | 書くもの |
+| --- | --- |
+| [logic/src/lib.rs](logic/src/lib.rs) | 返信や計算など、普段変更する処理と補助関数 |
+| [protocol/src/lib.rs](protocol/src/lib.rs) | 入力・戻り値の型、処理の名前と契約の版 |
+| [host/src/main.rs](host/src/main.rs) | 接続、継続する状態、イベント登録、更新を進めるループ |
+
+入力・戻り値の形式や意味を変えたら、対応する契約の版を上げ、ホストも再ビルド・再起動してください。
+同じ型名のまま行われたフィールド変更を、自動で互換性判定する機能はありません。
+ハンドラーの追加・削除やホストの変更も、ホストの再ビルド・再起動が必要です。
+
+### フレームワークとつなぐ
+
+ホストの `HandlerClient` は `Send + Sync` です。イベント処理へ clone し、
+`reply.call(message).await` で呼び出せます。SDK 固有のイベントはホストで入力データへ変換し、
+返された結果もホストで送信します。Discord 固有の接続やトークン設定は含まれていません。
+
+結果を待つ間も、DLL の所有スレッドで更新ループを動かしてください。
+キューに入れた時点では世代を確定せず、所有スレッドが取り出して実行を受け付けた世代を使います。
+容量超過で拒否された要求は、実行も自動再試行もしません。
+
+終了待ち中も更新処理が必要です。生成したホストでは `select!` で並行させています。
+キャンセルでは登録した子処理の終了を待ちます。未登録の独自 spawn の自動管理や、外部副作用の巻き戻しは行いません。
+
+### 監視せずに実行する
+
+静的リンク構成では、ロジックをホストと一緒にビルドします。変更後はアプリを再ビルド・再起動してください。
+
+```sh
+cargo run --no-default-features --features static-logic --locked
+```
+
+### SDK の参照先とロード上限
+
+[Cargo.toml](Cargo.toml) は、生成に使った SDK のローカルソースを参照します。
+SDK を移動した場合は `workspace.dependencies.reknot.path` も変更してください。
+
+ネイティブ構成の DLL は既定で保持されます。累積ロード試行の上限は既定32回で、失敗したネイティブロードも数えます。
+上限に達したら開発ホストを再起動します。DLL の回収で消費済みの枠が戻ることはありません。

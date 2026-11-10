@@ -1,0 +1,16 @@
+use reknot::typed::{Handler, Module};
+use serde::{Deserialize, Serialize};
+
+pub const REPLY: Handler<Message, Result<String, String>> = Handler::new("{{package}}.reply", 1);
+
+// Bump the handler contract version and restart the host after wire/meaning changes.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Message {
+    pub text: String,
+    pub received: u64,
+}
+
+pub fn module() -> Module {
+    Module::new("{{package}}", 1).with(REPLY)
+}

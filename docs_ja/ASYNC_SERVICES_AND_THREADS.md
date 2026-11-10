@@ -1,5 +1,7 @@
 # 非同期ホストサービスと複数スレッド
 
+[English](../docs/ASYNC_SERVICES_AND_THREADS.md) | 日本語
+
 ホストが I/O と実行スレッドを所有し、ロジック DLL はコピーしたバイト列を送って結果を待ちます。
 現行は **Handler ABI 5 / Services ABI 2 / タスク制御 ABI 2 / Activity ABI 1** です。
 ホストと DLL を一緒に再ビルドしてください。旧 Handler ABI 2～4 はロード時に拒否します。
@@ -94,7 +96,7 @@ Waker が別スレッドから通知できることと、タスク本体を移�
 
 ```powershell
 cargo run -p threaded_io_host --locked
-cargo test -p flow_reload --test async_services --test threaded_services --locked
+cargo test -p reknot --test async_services --test threaded_services --locked
 cargo test -p threaded_io_host --test native_threaded_io --locked -- --ignored --test-threads=1 --nocapture
 ./scripts/check-miri.ps1 -Toolchain nightly-2026-11-02
 ```

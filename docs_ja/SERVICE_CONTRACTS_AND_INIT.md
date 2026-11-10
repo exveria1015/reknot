@@ -1,5 +1,7 @@
 # 複数サービス要求と初期化データの型付け
 
+[English](../docs/SERVICE_CONTRACTS_AND_INIT.md) | 日本語
+
 **Handler ABI 5** のハンドラーは、主対象サービスに加えて必要なサービスと、
 世代ごとの初期化データのスキーマを宣言できます。
 Services ABI 2、タスク制御 ABI 2、Activity ABI 1 の契約を使います。
@@ -13,7 +15,7 @@ const REQUIRED: &[ServiceRequirement] = &[
     ServiceRequirement::new(2, FORMAT_V1),
 ];
 
-#[flow_reload::reload_handler(PRIMARY, requires = REQUIRED, init = Config)]
+#[reknot::reload_handler(PRIMARY, requires = REQUIRED, init = Config)]
 async fn handle(ctx: RequestContext) -> Result<(), ServiceError> {
     let config = ctx.initial::<Config>()?;
     let mut count = [0; 4];
@@ -125,7 +127,7 @@ Restart の停止開始後に失効した場合は旧世代を保持し、受付
 
 ```powershell
 cargo run -p contracts_host --locked
-cargo test -p flow_reload --test service_contracts --locked
+cargo test -p reknot --test service_contracts --locked
 cargo test -p contracts_host --test native_contracts --locked -- --ignored --test-threads=1 --nocapture
 ./scripts/check-miri.ps1 -Toolchain nightly-2026-11-02
 ```

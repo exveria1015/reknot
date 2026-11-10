@@ -1,6 +1,8 @@
 # Compatibility and scope
 
-flow-reloader is a pre-release SDK for updating trusted Rust logic during local
+English | [日本語](../docs_ja/COMPATIBILITY.md)
+
+Reknot is a pre-release SDK for updating trusted Rust logic during local
 development. The Rust API can change before release. Native and static logic
 use the same message API and ownership contracts.
 
@@ -24,9 +26,11 @@ separately using the [GUI guide](TAURI_GUI_LAB.md).
 
 ## API and ABI
 
-Use `reload_handler`, `HostResources`, `RequestRouter` and `RequestTask` for
-native reload and static linking. Features select the loading mode independently
-of Debug/Release; see [build configurations](API_REFERENCE.md#build-configurations).
+For ordinary functions, use `handler`, `export_handlers!` and `typed::ModuleHost`.
+The lower-level entry points for controlling host resources and admission are `reload_handler`, `HostResources`, `RequestRouter` and `RequestTask`.
+The typed API follows the same ABI and ownership contracts.
+Features select the loading mode independently of Debug/Release.
+See [build configurations](API_REFERENCE.md#build-configurations) for the settings.
 
 | Boundary | Version / contract |
 | --- | --- |
@@ -43,8 +47,8 @@ See the [API reference](API_REFERENCE.md) and [breaking changes](../CHANGELOG.md
 
 ## Application responsibilities
 
-- Keep host resources and routed tasks on their owner thread. Wake notifications
-  may cross threads; tasks and resource handles remain thread-bound.
+- Keep DLL tasks and host resources on their owner thread. Other threads may submit requests through a typed `HandlerClient`,
+  but cannot move the DLL tasks or resource handles themselves.
 - Drive polling, cancellation cleanup and registered child/callback joins.
   Register external work explicitly; unmanaged spawn tasks are not discovered.
 - Define service and state schemas, bounded queues and shutdown deadlines.
@@ -56,10 +60,10 @@ See the [API reference](API_REFERENCE.md) and [breaking changes](../CHANGELOG.md
   also consume the shared cumulative budget. Restart the process when exhausted,
   and explicitly clean eligible exited-session files as needed.
 - Explicit `unsafe reclaim_native_image` requires host proof of external return,
-  Waker tails, TLS and dependency quiescence. See [DLL lifetime](../docs_ja/UNLOAD_SAFETY.md).
+  Waker return, TLS and dependency quiescence. See [DLL lifetime](UNLOAD_SAFETY.md).
 
 Production rollout, crash isolation, arbitrary Future stack migration,
 automatic rollback of external effects, forced termination and automatic DLL
 unloading are outside the current scope. See [development operation](DEVELOPMENT.md)
-for recovery and [retention and cleanup](../docs_ja/RETENTION_AND_CLEANUP.md)
+for recovery and [retention and cleanup](RETENTION_AND_CLEANUP.md)
 for cache operations.

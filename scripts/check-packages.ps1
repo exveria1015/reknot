@@ -3,7 +3,7 @@ param([switch]$Offline)
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
 $taskRoot = Split-Path -Parent $PSScriptRoot
-$taskOldCacheRoot = [Environment]::GetEnvironmentVariable('FLOW_RELOAD_CACHE_ROOT')
+$taskOldCacheRoot = [Environment]::GetEnvironmentVariable('REKNOT_CACHE_ROOT')
 [string[]]$taskResolution = @()
 if ($Offline) { $taskResolution += '--offline' }
 
@@ -20,12 +20,12 @@ try {
     $taskMetadataJson = & cargo metadata --no-deps --format-version 1 --locked @taskResolution
     if ($LASTEXITCODE -ne 0) { throw 'Cannot read package metadata' }
     $taskMetadata = $taskMetadataJson | ConvertFrom-Json
-    $taskNames = @('interface', 'hot_macro', 'flow_reload')
+    $taskNames = @('reknot_abi', 'reknot_macros', 'reknot')
     $taskPackages = @($taskMetadata.packages | Where-Object { $_.name -in $taskNames })
     if ($taskPackages.Count -ne 3) { throw 'Cannot identify all three SDK packages' }
 
     Invoke-CheckedCargo (@(
-        'package', '-p', 'interface', '-p', 'hot_macro', '-p', 'flow_reload',
+        'package', '-p', 'reknot_abi', '-p', 'reknot_macros', '-p', 'reknot',
         '--allow-dirty', '--no-verify', '--locked'
     ) + $taskResolution)
 
@@ -72,7 +72,7 @@ $($taskPatches -join "`n")
     Copy-Item -LiteralPath (Join-Path $taskRoot 'Cargo.lock') -Destination (Join-Path $taskStage 'Cargo.lock')
     $taskConsumer = Join-Path $taskStage 'consumer/src'
     New-Item -ItemType Directory -Path $taskConsumer -Force | Out-Null
-    $taskVersion = ($taskPackages | Where-Object { $_.name -eq 'flow_reload' }).version
+    $taskVersion = ($taskPackages | Where-Object { $_.name -eq 'reknot' }).version
     $taskConsumerManifest = @"
 [package]
 name = "package_consumer"
@@ -81,11 +81,11 @@ edition = "2021"
 publish = false
 
 [dependencies]
-flow_reload = { version = "=$taskVersion", default-features = false }
+reknot = { version = "=$taskVersion", default-features = false }
 "@
     Set-Content -LiteralPath (Join-Path $taskStage 'consumer/Cargo.toml') -Value $taskConsumerManifest -Encoding utf8
     $taskConsumerSource = @'
-use flow_reload::{HostResource, HostResources, RequestContext, RequestRouter, RunStatus, ServiceError, ServiceKey};
+use reknot::{HostResource, HostResources, RequestContext, RequestRouter, RunStatus, ServiceError, ServiceKey};
 use std::cell::RefCell;
 use std::future::Future;
 use std::pin::Pin;
@@ -101,7 +101,7 @@ impl HostResource for Sink {
     }
 }
 
-#[flow_reload::reload_handler(KEY)]
+#[reknot::reload_handler(KEY)]
 async fn handle(ctx: RequestContext) -> Result<(), ServiceError> {
     ctx.call(0, ctx.input(), &mut [])?;
     Ok(())
@@ -120,39 +120,47 @@ fn main() {
 '@
     Set-Content -LiteralPath (Join-Path $taskConsumer 'main.rs') -Value $taskConsumerSource -Encoding utf8
     $taskManifest = Join-Path $taskStage 'Cargo.toml'
-    $env:FLOW_RELOAD_CACHE_ROOT = Join-Path $taskStage 'native-cache'
+    $env:REKNOT_CACHE_ROOT = Join-Path $taskStage 'native-cache'
     # The copied workspace lock is pruned for the extracted packages and consumer.
     Invoke-CheckedCargo (@(
         'check', '--manifest-path', $taskManifest, '--workspace', '--all-targets', '--all-features'
     ) + $taskResolution)
     Invoke-CheckedCargo (@(
-        'check', '--manifest-path', $taskManifest, '-p', 'flow_reload',
+        'check', '--manifest-path', $taskManifest, '-p', 'reknot',
         '--all-targets', '--no-default-features', '--locked'
     ) + $taskResolution)
     Invoke-CheckedCargo (@(
-        'test', '--manifest-path', $taskManifest, '-p', 'flow_reload', '--test', 'native_routing',
+        'test', '--manifest-path', $taskManifest, '-p', 'reknot', '--test', 'native_routing',
         '--locked'
     ) + $taskResolution + @(
         '--', 'version_four_header_is_rejected_without_reading_extended_manifest', '--exact'
     ))
     Invoke-CheckedCargo (@(
-        'test', '--manifest-path', $taskManifest, '-p', 'flow_reload', '--test', 'native_reclamation',
+        'test', '--manifest-path', $taskManifest, '-p', 'reknot', '--test', 'native_reclamation',
         '--locked'
     ) + $taskResolution + @('--', '--test-threads=1'))
     Invoke-CheckedCargo (@(
-        'test', '--manifest-path', $taskManifest, '-p', 'flow_reload', '--test', 'native_managed_generation',
+        'test', '--manifest-path', $taskManifest, '-p', 'reknot', '--test', 'native_managed_generation',
         '--locked'
     ) + $taskResolution + @('--', '--test-threads=1'))
+    Invoke-CheckedCargo (@(
+        'test', '--manifest-path', $taskManifest, '-p', 'reknot', '--no-default-features',
+        '--features', 'typed', '--test', 'typed_handlers', '--test', 'typed_services',
+        '--test', 'typed_bridge', '--test', 'scaffold', '--locked'
+    ) + $taskResolution)
+    Invoke-CheckedCargo (@(
+        'test', '--manifest-path', $taskManifest, '-p', 'reknot', '--test', 'scaffold', '--locked'
+    ) + $taskResolution + @('--', '--ignored', '--test-threads=1'))
     Invoke-CheckedCargo (@(
         'run', '--manifest-path', $taskManifest, '-p', 'package_consumer', '--locked'
     ) + $taskResolution)
     @{
         archives = $taskArchives
         extracted_workspace = $taskStage
-        checks = @('all-targets/all-features', 'all-targets/no-default-features', 'standalone ABI DLL', 'explicit native reclamation', 'managed generation cleanup', 'static consumer')
+        checks = @('all-targets/all-features', 'all-targets/no-default-features', 'standalone ABI DLL', 'explicit native reclamation', 'managed generation cleanup', 'typed handlers/services/bridge', 'generated static and native project', 'static consumer')
     } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $taskStage 'result.json') -Encoding utf8
     Write-Host "Verified extracted SDK packages and consumer: $taskStage"
 } finally {
-    [Environment]::SetEnvironmentVariable('FLOW_RELOAD_CACHE_ROOT', $taskOldCacheRoot)
+    [Environment]::SetEnvironmentVariable('REKNOT_CACHE_ROOT', $taskOldCacheRoot)
     Pop-Location
 }

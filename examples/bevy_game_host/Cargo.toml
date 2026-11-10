@@ -8,6 +8,6 @@ license.workspace = true
 
 [dependencies]
 bevy = { version = "=0.20.1", default-features = false, features = ["std", "async_executor", "multi_threaded"] }
-flow_reload = { path = "../../flow_reload" }
+reknot = { path = "../../reknot" }
 bevy_game_protocol = { path = "../bevy_game_protocol" }
 serde_json = "1"

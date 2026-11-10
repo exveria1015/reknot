@@ -1,5 +1,7 @@
 # 子タスクと外部コールバックの管理
 
+[English](../docs/MANAGED_ACTIVITIES.md) | 日本語
+
 メッセージ API に明示登録した処理を、ルート要求の終了待ちに含めます。
 現行は Handler ABI **5**、Services ABI **2**、タスク制御 ABI **2**、Activity ABI **1** です。
 ホストとロジック DLL を一緒に再ビルドしてください。旧 Handler ABI 2～4 の DLL は拒否します。
@@ -19,7 +21,7 @@ ctx.spawn_child(|stop| async move {
 ホストが `RequestTask` を poll するたびに、ルートと登録済み処理を進めます。
 生成クロージャは登録成功後の初回 poll まで呼びません。子は `'static` に限定し、
 ルートのスタックや Future への借用は持てません。
-実行できる例は `cargo run -p flow_reload --example managed_children --locked` です。
+実行できる例は `cargo run -p reknot --example managed_children --locked` です。
 
 独立したランタイムの JoinHandle やコールバック登録には、
 `ctx.register_activity(adapter)` と `unsafe impl ManagedActivity` を使います。
@@ -65,7 +67,7 @@ ctx.spawn_child(|stop| async move {
 ```rust,ignore
 drop(task); // ルートは破棄。登録した後処理は未完了のまま残り得る。
 // フレーム／ホストの executor から、同じ所有スレッドで繰り返し呼ぶ。
-let pending = flow_reload::poll_cancelled_requests(&mut cx).is_pending();
+let pending = reknot::poll_cancelled_requests(&mut cx).is_pending();
 ```
 
 `poll_workers` と Restart もこのキューを進めます。キューは所有スレッド単位で、
@@ -97,8 +99,8 @@ join まで完了しても、登録処理の停止・終了で失敗があれば
 ## 検証
 
 ```powershell
-cargo test -p flow_reload --test managed_activities --test native_routing --locked
-cargo run -p flow_reload --example managed_children --locked
+cargo test -p reknot --test managed_activities --test native_routing --locked
+cargo run -p reknot --example managed_children --locked
 ./scripts/check-miri.ps1 -Toolchain nightly-2026-11-02
 ```
 

@@ -1,5 +1,7 @@
 # Bevy ゲームへの最小適用
 
+[English](../docs/BEVY_GAME.md) | 日本語
+
 Bevy **0.20.1** の `App` / `MinimalPlugins` / ECS を使い、1体の Actor の位置を
 実 DLL の常駐ワーカーで進めるサンプルです。描画なしで実行し、更新時の規則を先に検証します。
 ホストには Rust 1.97.1 以降が必要です。Bevy はホストだけに依存し、ロジック DLL は依存しません。

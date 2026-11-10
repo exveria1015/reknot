@@ -1,5 +1,7 @@
 # Tauri GUI で編集とリロードを試す
 
+[English](../docs/TAURI_GUI_LAB.md) | 日本語
+
 英語 UI の、信頼済みローカル Rust コード向けの開発サンプル。
 
 ## 起動
@@ -63,9 +65,9 @@ ABI・スキーマの検査失敗や停止待ち失敗は別の失敗。Restart 
 実行中のロジックが poll から戻らない場合の強制停止や、任意の実行時 panic からの自動復旧は提供しない。
 
 保持予算は既定32枠。枯渇後はウィンドウを閉じて開発プロセスを再起動する。
-DLL コピー先はユーザー一時領域の `flow-reloader/managed-v1/sessions/<SessionId>/copies/`。
+DLL コピー先はユーザー一時領域の `reknot/managed-v1/sessions/<SessionId>/copies/`。
 起動時の作業ディレクトリが読み取り専用でも使える。
-`flow-cache inspect` で調べ、終了後の適格なセッションだけを `flow-cache clean --apply` で掃除する。
+`reknot-cache inspect` で調べ、終了後の適格なセッションだけを `reknot-cache clean --apply` で掃除する。
 詳細は [保持量の観測とコピーの掃除](RETENTION_AND_CLEANUP.md) を参照。
 
 ## 実装

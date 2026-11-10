@@ -24,8 +24,8 @@ jobs:
         run: rustup toolchain install 1.95.0 --profile minimal
       - name: Core feature configurations
         run: |
-          cargo +1.95.0 check -p interface -p hot_macro -p flow_reload --all-targets --all-features --locked
-          cargo +1.95.0 check -p flow_reload --all-targets --no-default-features --locked
+          cargo +1.95.0 check -p reknot_abi -p reknot_macros -p reknot --all-targets --all-features --locked
+          cargo +1.95.0 check -p reknot --all-targets --no-default-features --locked
 
   bevy-msrv:
     runs-on: ubuntu-latest
@@ -133,7 +133,7 @@ jobs:
       - name: Formatting
         run: |
           cargo fmt --all -- --check
-          rustfmt --edition 2021 --check flow_reload/tests/fixtures/handler.rs flow_reload/tests/fixtures/abi_v5.rs flow_reload/tests/fixtures/reclamation.rs flow_reload/tests/fixtures/managed_logic.rs
+          rustfmt --edition 2021 --check reknot/tests/fixtures/handler.rs reknot/tests/fixtures/abi_v5.rs reknot/tests/fixtures/reclamation.rs reknot/tests/fixtures/managed_logic.rs reknot/tests/fixtures/typed_logic.rs
       - uses: actions/setup-python@v5
         with:
           python-version: '3.x'
@@ -143,21 +143,28 @@ jobs:
         shell: pwsh
         run: ./scripts/check-packages.ps1
       - name: Core lints (default features)
-        run: cargo clippy -p interface -p hot_macro -p flow_reload --all-targets --locked -- -D warnings
+        run: cargo clippy -p reknot_abi -p reknot_macros -p reknot --all-targets --locked -- -D warnings
       - name: Core lints (all features)
-        run: cargo clippy -p interface -p hot_macro -p flow_reload --all-targets --all-features --locked -- -D warnings
+        run: cargo clippy -p reknot_abi -p reknot_macros -p reknot --all-targets --all-features --locked -- -D warnings
       - name: Public API documentation
         env:
           RUSTDOCFLAGS: '-D warnings'
-        run: cargo doc -p interface -p hot_macro -p flow_reload --all-features --no-deps --locked
+        run: cargo doc -p reknot_abi -p reknot_macros -p reknot --all-features --no-deps --locked
       - name: Core tests (default features)
-        run: cargo test -p interface -p hot_macro -p flow_reload --locked
+        run: cargo test -p reknot_abi -p reknot_macros -p reknot --locked
       - name: Cache retention and separate host/cleaner processes
-        run: cargo test -p flow_reload --test cache_lifecycle --locked -- --test-threads=1
+        run: cargo test -p reknot --test cache_lifecycle --locked -- --test-threads=1
       - name: Explicit DLL reclamation and escaped Waker return barriers
-        run: cargo test -p flow_reload --test native_reclamation --locked -- --test-threads=1
+        run: cargo test -p reknot --test native_reclamation --locked -- --test-threads=1
       - name: Resident host notifications and registered generation TLS
-        run: cargo test -p flow_reload --test native_managed_generation --locked -- --test-threads=1
+        run: cargo test -p reknot --test native_managed_generation --locked -- --test-threads=1
+      - name: Typed handlers and background save/reload
+        run: |
+          cargo test -p reknot --test native_typed --locked -- --ignored --test-threads=1
+          cargo clippy -p typed_bot_host -p typed_bot_logic -p typed_bot_protocol --all-targets --all-features --locked -- -D warnings
+          cargo test -p reknot --no-default-features --features typed --test typed_handlers --test typed_services --test typed_bridge --locked
+          cargo test -p typed_bot_host --no-default-features --features static-logic --locked
+          cargo run -p typed_bot_host --example framework_bridge --no-default-features --features static-logic --locked
       - name: Workspace tests without the GUI application
         run: cargo test --workspace --exclude tauri_tokio --all-features --locked
       - name: Native asynchronous I/O and multiple owner threads
@@ -175,12 +182,12 @@ jobs:
           cargo clippy -p bevy_game_host -p bevy_game_logic -p bevy_game_protocol --all-targets --all-features --locked -- -D warnings
           cargo test -p bevy_game_host --test native_game --locked -- --ignored --test-threads=1
       - name: Release tests and macro expansion
-        run: cargo test -p interface -p hot_macro -p flow_reload --release --all-features --locked
+        run: cargo test -p reknot_abi -p reknot_macros -p reknot --release --all-features --locked
       - name: Static and native-only features
         run: |
-          cargo clippy -p flow_reload --all-targets --no-default-features --locked -- -D warnings
-          cargo test -p flow_reload --no-default-features --locked
-          cargo clippy -p flow_reload --all-targets --no-default-features --features native --locked -- -D warnings
+          cargo clippy -p reknot --all-targets --no-default-features --locked -- -D warnings
+          cargo test -p reknot --no-default-features --locked
+          cargo clippy -p reknot --all-targets --no-default-features --features native --locked -- -D warnings
           cargo clippy -p service_host --all-targets --no-default-features --features static-logic --locked -- -D warnings
           cargo test -p service_host --release --no-default-features --features static-logic --locked
       - name: Static dependency boundary

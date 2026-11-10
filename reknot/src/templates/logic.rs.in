@@ -1,0 +1,21 @@
+use {{crate}}_protocol::{module, Message, REPLY};
+
+#[reknot::handler(REPLY)]
+async fn reply(message: Message) -> Result<String, String> {
+    let text = message.text.trim();
+    if text.is_empty() {
+        return Err("Please enter a message.".into());
+    }
+    // Change this label or decorate(), save, then send another message.
+    Ok(format!(
+        "logic-v1 / message {}: {}",
+        message.received,
+        decorate(text)
+    ))
+}
+
+fn decorate(text: &str) -> String {
+    text.to_uppercase()
+}
+
+reknot::export_handlers!(module(), [reply]);

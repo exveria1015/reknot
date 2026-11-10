@@ -13,7 +13,7 @@ fn target() -> PathBuf {
         .join(std::process::id().to_string())
 }
 fn library() -> PathBuf {
-    flow_reload::development::library_path_in(&target(), "bevy_game_logic")
+    reknot::development::library_path_in(&target(), "bevy_game_logic")
 }
 
 fn spawn(fast: bool) -> std::io::Result<Child> {
@@ -61,12 +61,12 @@ pub fn initial() -> std::io::Result<PathBuf> {
 /// Sequential Cargo invocations, using a different target directory from the outer host/test.
 pub fn variants() -> std::io::Result<(PathBuf, PathBuf)> {
     let slow_source = initial()?;
-    let slow = target().join(flow_reload::development::library_file_name("game_slow"));
+    let slow = target().join(reknot::development::library_file_name("game_slow"));
     std::fs::copy(slow_source, &slow)?;
     if !spawn(true)?.wait()?.success() {
         return Err(failure());
     }
-    let fast = target().join(flow_reload::development::library_file_name("game_fast"));
+    let fast = target().join(reknot::development::library_file_name("game_fast"));
     std::fs::copy(library(), &fast)?;
     Ok((slow, fast))
 }

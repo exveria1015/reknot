@@ -1,0 +1,22 @@
+[package]
+name = "typed_bot_host"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[features]
+default = ["reload"]
+reload = ["reknot/native", "reknot/dev-tools"]
+static-logic = ["dep:typed_bot_logic"]
+
+[dependencies]
+reknot = { path = "../../reknot", default-features = false, features = ["typed"] }
+typed_bot_protocol = { path = "../typed_bot_protocol" }
+typed_bot_logic = { path = "../typed_bot_logic", optional = true }
+tokio = { version = "1", features = ["rt", "macros", "time", "io-std", "io-util"] }
+
+[[example]]
+name = "framework_bridge"
+required-features = ["static-logic"]

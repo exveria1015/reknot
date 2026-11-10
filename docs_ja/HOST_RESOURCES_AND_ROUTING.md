@@ -1,5 +1,7 @@
 # ホスト資源と Drain の受付切り替え
 
+[English](../docs/HOST_RESOURCES_AND_ROUTING.md) | 日本語
+
 Handler ABI 5・Services ABI 2 のメッセージ API の契約です。
 常駐ワーカーの協調停止と状態移行は [Restart](RESTART_AND_MIGRATION.md) に分けています。
 
@@ -66,9 +68,9 @@ impl HostResource for Session {
 ## ハンドラー
 
 ```rust
-use flow_reload::{RequestContext, ServiceError, ServiceKey};
+use reknot::{RequestContext, ServiceError, ServiceKey};
 
-#[flow_reload::reload_handler(ServiceKey::new(0x4c49_4e45, 1))]
+#[reknot::reload_handler(ServiceKey::new(0x4c49_4e45, 1))]
 async fn handle(request: RequestContext) -> Result<(), ServiceError> {
     request.call(0, request.input(), &mut [])?;
     Ok(())
@@ -136,7 +138,7 @@ from_api／prepare_api は静的リンク等の拡張口で、呼び出し元が
 cargo run -p service_host --locked
 ```
 
-既定は 127.0.0.1:4000、環境変数 FLOW_RELOAD_ADDR で変更できる。
+既定は 127.0.0.1:4000、環境変数 REKNOT_ADDR で変更できる。
 改行で区切ったテキストを送信し、`examples/service_logic/src/lib.rs` の応答ラベルを変更して保存する。
 同じ接続の次のメッセージが新世代を使う。`slow` と改行を送ると5秒間の処理になり、その間の更新でも旧処理は旧コードで完了する。
 このサンプルは単一接続・単一スレッド。ビルド自体は同期的に行い、接続の入力待ち中の変更は次のメッセージ境界で反映する。

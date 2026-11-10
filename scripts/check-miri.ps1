@@ -25,7 +25,10 @@ $taskGroups = @(
     @{ Name = 'managed-activities'; Args = @('--test', 'managed_activities') },
     @{ Name = 'async-services'; Args = @('--test', 'async_services') },
     @{ Name = 'threaded-services'; Args = @('--test', 'threaded_services') },
-    @{ Name = 'service-contracts'; Args = @('--test', 'service_contracts') }
+    @{ Name = 'service-contracts'; Args = @('--test', 'service_contracts') },
+    @{ Name = 'typed-handlers'; Args = @('--features', 'typed', '--test', 'typed_handlers') },
+    @{ Name = 'typed-services'; Args = @('--features', 'typed', '--test', 'typed_services') },
+    @{ Name = 'typed-bridge'; Args = @('--features', 'typed', '--test', 'typed_bridge') }
 )
 
 Push-Location $taskRoot
@@ -34,25 +37,28 @@ try {
     $taskRustVersion = & rustc "+$Toolchain" -Vv
     if ($LASTEXITCODE -ne 0) { throw "Rust toolchain '$Toolchain' is not available." }
     $taskSourceFiles = @(
-        'Cargo.toml', 'flow_reload/Cargo.toml', 'interface/Cargo.toml', 'hot_macro/Cargo.toml',
-        'interface/src/lib.rs', 'hot_macro/src/lib.rs', 'flow_reload/src/lib.rs',
-        'flow_reload/src/internal.rs', 'flow_reload/src/generation.rs', 'flow_reload/src/native.rs',
-        'flow_reload/src/generation_scope.rs', 'flow_reload/src/generation_local.rs',
-        'flow_reload/src/notification.rs', 'flow_reload/tests/generation_locals.rs',
-        'flow_reload/src/task/future.rs', 'flow_reload/src/task/waker.rs', 'flow_reload/src/task/mod.rs',
-        'flow_reload/src/resources.rs', 'flow_reload/src/request.rs', 'flow_reload/src/routing.rs',
-        'interface/src/services.rs', 'hot_macro/src/handler.rs',
-        'flow_reload/src/routing/control.rs', 'flow_reload/src/routing/limits.rs',
-        'flow_reload/src/routing/restart.rs', 'flow_reload/tests/restart.rs',
-        'flow_reload/src/retention.rs', 'flow_reload/src/cache.rs',
-        'flow_reload/src/cache/session.rs', 'flow_reload/src/cache/permissions.rs',
-        'flow_reload/tests/host_commit.rs',
-        'flow_reload/src/activity.rs', 'flow_reload/tests/managed_activities.rs',
-        'flow_reload/src/async_service.rs', 'flow_reload/src/resources/async_ops.rs',
-        'flow_reload/src/thread_service.rs', 'flow_reload/tests/async_services.rs',
-        'flow_reload/tests/threaded_services.rs',
-        'flow_reload/src/environment.rs', 'flow_reload/tests/service_contracts.rs',
-        'flow_reload/tests/host_resources.rs', 'flow_reload/tests/request_routing.rs',
+        'Cargo.toml', 'reknot/Cargo.toml', 'reknot_abi/Cargo.toml', 'reknot_macros/Cargo.toml',
+        'reknot_abi/src/lib.rs', 'reknot_macros/src/lib.rs', 'reknot/src/lib.rs',
+        'reknot/src/internal.rs', 'reknot/src/generation.rs', 'reknot/src/native.rs',
+        'reknot/src/generation_scope.rs', 'reknot/src/generation_local.rs',
+        'reknot/src/notification.rs', 'reknot/tests/generation_locals.rs',
+        'reknot/src/task/future.rs', 'reknot/src/task/waker.rs', 'reknot/src/task/mod.rs',
+        'reknot/src/resources.rs', 'reknot/src/request.rs', 'reknot/src/routing.rs',
+        'reknot_abi/src/services.rs', 'reknot_macros/src/handler.rs',
+        'reknot/src/routing/control.rs', 'reknot/src/routing/limits.rs',
+        'reknot/src/routing/restart.rs', 'reknot/tests/restart.rs',
+        'reknot/src/retention.rs', 'reknot/src/cache.rs',
+        'reknot/src/cache/session.rs', 'reknot/src/cache/permissions.rs',
+        'reknot/tests/host_commit.rs',
+        'reknot/src/activity.rs', 'reknot/tests/managed_activities.rs',
+        'reknot/src/async_service.rs', 'reknot/src/resources/async_ops.rs',
+        'reknot/src/thread_service.rs', 'reknot/tests/async_services.rs',
+        'reknot/tests/threaded_services.rs',
+        'reknot/src/environment.rs', 'reknot/tests/service_contracts.rs',
+        'reknot/tests/host_resources.rs', 'reknot/tests/request_routing.rs',
+        'reknot/src/typed/mod.rs', 'reknot/src/typed/runtime.rs', 'reknot_macros/src/typed.rs',
+        'reknot/src/typed/bridge.rs', 'reknot/tests/typed_bridge.rs',
+        'reknot/tests/typed_handlers.rs', 'reknot/tests/typed_services.rs',
         'Cargo.lock'
     )
     $taskHashes = foreach ($taskFile in $taskSourceFiles) {
@@ -74,7 +80,7 @@ try {
         foreach ($taskGroup in $taskGroups) {
             $taskLogName = "$($taskModel.ToLowerInvariant())-$($taskGroup.Name).log"
             $taskArgs = @(
-                "+$Toolchain", 'miri', 'test', '-p', 'flow_reload',
+                "+$Toolchain", 'miri', 'test', '-p', 'reknot',
                 '--no-default-features', '--locked', '--target', 'x86_64-unknown-linux-gnu'
             ) + $taskGroup.Args
             Write-Host "Running $taskModel / $($taskGroup.Name) (seed $Seed)"

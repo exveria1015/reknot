@@ -1,5 +1,7 @@
 # 登録型TLSとホスト所有の通知
 
+[English](../docs/MANAGED_LOCALS_AND_NOTIFICATIONS.md) | 日本語
+
 フレームワークは、SDKの経路で管理する通知と、明示登録した世代ローカル値の寿命を管理します。
 依存ライブラリ固有の終了処理は、アプリケーションや個別アダプターが実装します。
 その処理が終わったことは、引き続きDLL回収の条件です。
@@ -17,7 +19,7 @@
 Router、要求、登録処理は従来どおり所有スレッドに留まり、値もそのスレッドだけで扱います。
 
 ```rust
-use flow_reload::{GenerationLocal, RequestContext, ServiceError};
+use reknot::{GenerationLocal, RequestContext, ServiceError};
 
 static BUFFER: GenerationLocal<Vec<u8>> = GenerationLocal::new(Vec::new);
 
@@ -83,8 +85,8 @@ SDKはテーブルのサイズと拡張ヘッダーを検査してから拡張�
 ## 検証
 
 ```powershell
-cargo test -p flow_reload --test generation_locals --locked
-cargo test -p flow_reload --test native_managed_generation --locked -- --test-threads=1
+cargo test -p reknot --test generation_locals --locked
+cargo test -p reknot --test native_managed_generation --locked -- --test-threads=1
 ```
 
 静的試験では値の共有・分離、借用、panic、古いテーブルと不明な拡張の拒否を検査します。

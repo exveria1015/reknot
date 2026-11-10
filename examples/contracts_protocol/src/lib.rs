@@ -1,5 +1,5 @@
 //! Shared wire protocol source; no Rust object is passed through the native ABI.
-use flow_reload::{InitPayload, ServiceError, ServiceKey, ServiceRequirement};
+use reknot::{InitPayload, ServiceError, ServiceKey, ServiceRequirement};
 pub const PRIMARY: ServiceKey = ServiceKey::new(0x434f_4e54, 1);
 pub const COUNTER: ServiceKey = ServiceKey::new(0x434f_554e, 1);
 pub const FORMAT: ServiceKey = ServiceKey::new(0x464d_5420, 1);

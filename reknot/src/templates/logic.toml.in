@@ -1,0 +1,13 @@
+[package]
+name = "{{package}}-logic"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+reknot.workspace = true
+{{package}}-protocol = { path = "../protocol" }

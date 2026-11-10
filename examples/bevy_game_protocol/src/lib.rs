@@ -1,5 +1,5 @@
 //! Copied wire messages only. No Bevy World, Entity reference or component crosses the DLL ABI.
-use flow_reload::ServiceKey;
+use reknot::ServiceKey;
 use serde::{Deserialize, Serialize};
 
 pub const GAME: ServiceKey = ServiceKey::new(0x4741_4d45, 1);

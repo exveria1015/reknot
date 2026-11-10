@@ -1,5 +1,7 @@
 # 非同期実行の所有・借用・破棄順序
 
+[English](../docs/LIFETIME_REVIEW.md) | 日本語
+
 Handler ABI 5 の `RequestTask` を、ネイティブロード・静的リンクで共通に使います。
 
 ## メッセージ実行
@@ -26,7 +28,7 @@ Restart は管理対象ルートと登録処理の終了確認まで待ってか
 | `task/waker.rs` | 所有権を持つ Waker の相互変換とコード参照の保持 |
 | `activity.rs` | 明示登録した処理の停止・join・外部コールバック帰還 |
 | `generation.rs`、`native.rs` | コード参照、画像の観測、開けた DLL のプロセス終了までの保持 |
-| `request.rs`、`hot_macro/src/handler.rs` | 入力コピー、サービス保持、独立した Future の生成 |
+| `request.rs`、`reknot_macros/src/handler.rs` | 入力コピー、サービス保持、独立した Future の生成 |
 
 ## Future と Waker の寿命
 

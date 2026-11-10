@@ -1,7 +1,5 @@
 #![cfg(feature = "static-logic")]
-use flow_reload::{
-    HostResource, HostResources, RequestRouter, RunStatus, ServiceError, ServiceKey,
-};
+use reknot::{HostResource, HostResources, RequestRouter, RunStatus, ServiceError, ServiceKey};
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll, Waker};

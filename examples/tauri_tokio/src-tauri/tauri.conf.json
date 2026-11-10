@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Flow Reload Lab",
+  "productName": "Reknot Lab",
   "version": "0.1.0",
-  "identifier": "com.reactorreloader.tauri_tokio",
+  "identifier": "io.github.exveria1015.reknot_lab",
   "build": {
     "frontendDist": "../dist"
   },
@@ -16,7 +16,7 @@
     },
     "windows": [
       {
-        "title": "Flow Reload Lab — Rust hot reload",
+        "title": "Reknot Lab — Rust hot reload",
         "width": 1180,
         "height": 850,
         "minWidth": 940,

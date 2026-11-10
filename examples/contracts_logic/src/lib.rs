@@ -1,8 +1,8 @@
 use contracts_protocol::*;
-use flow_reload::{RequestContext, ServiceError};
+use reknot::{RequestContext, ServiceError};
 use std::task::Poll;
 
-#[flow_reload::reload_handler(PRIMARY, requires = REQUIREMENTS, init = Config)]
+#[reknot::reload_handler(PRIMARY, requires = REQUIREMENTS, init = Config)]
 async fn handler(ctx: RequestContext) -> Result<(), ServiceError> {
     let mut first = true;
     std::future::poll_fn(|cx| {

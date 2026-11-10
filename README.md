@@ -1,133 +1,93 @@
-# flow-reloader
+# Reknot
 
-Hot-reload trusted Rust logic while keeping the host process, connections and UI alive.
-Built for **local development** of servers, games and desktop applications.
+English | [日本語](docs_ja/README.md) · [Documentation index](docs/INDEX.md)
 
-The host owns resources and admission; message handlers run in generation-bound
-tasks. Choose **Drain** to finish existing work on old code, or **Restart** to stop
-registered workers cooperatively and recreate them from versioned checkpoints.
+**Edit and try Rust logic while your application keeps running.**
 
-[English docs](docs/README.md) · [日本語ドキュメント](docs_ja/README.md) ·
-[Examples](examples/README.md) · [Changelog](CHANGELOG.md)
+Reknot (formerly flow-reloader) is a hot-reload SDK for local development.
+Keep connections, UI and state in the host, and put the code you want to change in a separate logic crate.
+Save an edit to the logic; once the build and contract checks succeed, new work uses the updated code.
 
-**Pre-release:** the Rust API may change. Host and logic must use the same SDK.
-See [compatibility and scope](docs/COMPATIBILITY.md) for compiler requirements,
-platform coverage and application responsibilities.
+For example, you can adjust a bot's replies or input checks without reconnecting.
+Write handlers as ordinary Rust functions, then register them with an attribute.
 
-## Quick start
+## Try it
 
-From the workspace root with Rust 1.95+ and Cargo installed:
+With Rust 1.95 or later and Cargo installed, run this command from the repository root.
+Start with the console bot, which needs no external account or token.
 
 ```sh
-cargo run -p service_host --locked
+cargo run -p typed_bot_host --locked
 ```
 
-Connect a TCP client to `127.0.0.1:4000` and send newline-terminated text. Edit
-`examples/service_logic/src/lib.rs`, save, then send another message on the same
-connection. The host keeps the connection; new requests use the rebuilt logic.
-See [getting started](docs/GETTING_STARTED.md) / [導入手順](docs_ja/GETTING_STARTED.md)
-for the host/logic split.
+After the initial build, wait for `Typed bot ready.`, then try the following:
 
-## Examples
+1. Enter `hello`. The reply is `logic-v1 / message 1: HELLO`.
+2. In the [logic source](examples/typed_bot_logic/src/lib.rs), change `logic-v1` to `logic-v2` and save.
+3. Wait for `New events use generation ...`, then enter another message. The reply now uses `logic-v2`.
 
-Run one example at a time. Commands use the workspace's committed lockfile.
+Enter `/summary` to see up to the last 100 input messages. The history stays in the host across logic updates.
+Enter `/quit` to exit.
 
-| Example | Command | Demonstrates |
-| --- | --- | --- |
-| TCP service | `cargo run -p service_host --locked` | Host-owned connections and Drain at message boundaries |
-| Restart | `cargo run -p flow_reload --example restart --locked` | Cooperative shutdown, checkpoint migration and load budgets |
-| Managed children | `cargo run -p flow_reload --example managed_children --locked` | Registered child cleanup before cutover |
-| Threaded I/O | `cargo run -p threaded_io_host --locked` | Two DLL generations, two logic owner threads and bounded host TCP I/O |
-| Service contracts | `cargo run -p contracts_host --locked` | Required services and typed initial configuration |
-| SQLite migration | `cargo run -p db_migration_host --locked` | Resource migration, rollback, retry and durable reopen; needs a C compiler |
-| Bevy game | `cargo run -p bevy_game_host --locked -- --verify` | Headless frame cutover, worker Restart and stale result rejection; Rust 1.97.1+ |
-| Tauri GUI | `cargo run -p tauri_tokio --locked` | In-window Rust editor, Drain/Restart and build diagnostics; needs platform Tauri prerequisites |
+If a build fails, the running logic stays in use. Fix the error and save to retry.
 
-The [example guide](examples/README.md) explains prerequisites, source files and
-interactive modes. The GUI uses handwritten HTML/CSS/JavaScript; npm and the Tauri
-CLI are not required.
+## Create your own application
 
-## Contracts and limits
-
-- Native-loading APIs are `unsafe`: all loaded code, including initialization,
-  finalization and callbacks, must follow the SDK contracts. Metadata validation
-  does not isolate untrusted native code.
-- Host resources use service IDs/versions and copied byte buffers, rather than
-  sharing Rust objects across DLL ownership boundaries. Synchronous operations are short;
-  `call_async` waits on owned host I/O and joins cancellation before request completion.
-- Tasks and resource registries are bound to their owner thread. Hosts drive polling;
-  `spawn_child` and `register_activity` join explicitly registered work before request
-  completion. Independent spawn tasks and callbacks are not automatically discovered.
-  Dropped requests with pending cleanup need owner-thread `poll_cancelled_requests`
-  (also driven by worker polling and Restart). See [managed activities](docs_ja/MANAGED_ACTIVITIES.md).
-- `restart_with_commit` stages all workers before a synchronous application commit
-  hook. Applications own resource exclusion, SQL rollback and durable recovery;
-  database commit and router installation are not one crash-atomic operation.
-- The message path uses **Handler ABI 5**, Services ABI 2 and task-control ABI 2.
-  Rebuild host and logic together after ABI changes.
-- Native images default to **KeepLoaded**, including abandoned or invalid loaded
-  candidates. Code and temporary copies can accumulate. This preserves code lifetime,
-  not borrowed data lifetime or task termination.
-  Constrained hosts can explicitly use `unsafe reclaim_native_image` after proving
-  external execution, Waker return and TLS/dependency quiescence; see [DLL lifetime](docs_ja/UNLOAD_SAFETY.md).
-- `RouterOptions` defaults to 32 cumulative load attempts per shared
-  `GenerationBudget` and 1 MiB per worker checkpoint. Failed native loads consume
-  budget too; completion does not refund it. Restart the development process when exhausted.
-- DLL copies live under `flow-reloader/managed-v1/sessions/<SessionId>/copies/`
-  in the user's temporary directory. `retention_snapshot()` reports SDK-held images;
-  `cargo run -p flow_reload --bin flow-cache --locked -- inspect` reports copy files.
-  `clean --apply` removes eligible exited sessions; legacy PID directories are listed only.
-  See [operations and limits](docs_ja/RETENTION_AND_CLEANUP.md).
-
-## Build modes
-
-The public API is `reload_handler` + `HostResources` + `RequestRouter` in both modes.
-The generated `handler_api()` table also supports statically linked logic:
+Generate a starter project from the repository root:
 
 ```sh
-cargo run -p service_host --release --no-default-features --features static-logic --locked
+cargo run -p reknot --bin reknot-new --locked -- ../my-bot
+cd ../my-bot
+cargo run
 ```
 
-`flow_reload` defaults to `native` and `dev-tools`. Use `default-features = false`
-in logic crates and static hosts to remove the DLL loader, watcher and cache OS
-dependencies. Build mode is selected explicitly through features, independently
-of Debug/Release. See [build configurations](docs/API_REFERENCE.md#build-configurations)
-for the feature matrix and [changelog](CHANGELOG.md) for breaking API changes.
+Choose a new directory as the destination. Commit the `Cargo.lock` created on the first run,
+then use `cargo run --locked` for subsequent runs.
 
-## Workspace
+The project has three crates, each with a separate role:
 
-| Crate | Role |
+| Location | What belongs here |
 | --- | --- |
-| `flow_reload` | Host resources, owned tasks, routing and optional native loading |
-| `hot_macro` | `reload_handler` for native and statically linked logic |
-| `interface` | Versioned C ABI tables and opaque task/service handles |
-| `examples` | Runnable native hosts and logic crates |
+| `logic` | Replies, calculations and other behavior you want to edit and try |
+| `protocol` | Shared input/output types, handler identities and contract versions |
+| `host` | Connections, event registration, persistent state and the update loop |
 
-## Verify changes
+Start by changing a reply in `logic/src/lib.rs` and saving.
+In the generated application, `/count` shows the number of input messages.
+The [typed-handler guide](docs/TYPED_HANDLERS.md) explains the SDK source path and how to write handlers.
 
-Plain `cargo build` / `cargo test` select the three core crates. The workspace lockfile
-is committed; use `--locked` for repeatable dependency resolution. GUI/game samples
-remain explicit workspace targets.
+## What changes during an update
 
-```sh
-cargo fmt --all -- --check
-cargo clippy -p interface -p hot_macro -p flow_reload --all-targets --all-features --locked -- -D warnings
-cargo test -p flow_reload --no-default-features --locked
-cargo test -p service_host --no-default-features --features static-logic --locked
-cargo test --workspace --exclude tauri_tokio --all-features --locked
-cargo test -p interface -p hot_macro -p flow_reload --release --all-features --locked
-```
+The typed API updates one crate/DLL as a unit.
+Its handlers and helper functions run from the same version of the code. A loaded version of the logic is called a **generation**.
 
-See [testing and scope](docs/TESTING.md) for native DLL fixtures, the GUI backend
-test, Miri setup and CI coverage. Miri, native DLL tests and interactive GUI checks
-cover different behavior; none establishes safety for arbitrary plugins.
+After a switch, requests already admitted continue to completion on the old generation.
+This is **Drain**. The entry points registered with the host stay in place and route later work to the new generation.
+For calls queued from another thread, the owner thread selects the generation when it admits the request for execution.
 
-See [contributing](CONTRIBUTING.md) for source layout, documentation conventions
-and the checks to run before proposing a change.
+The lower-level API also provides **Restart**, which stops registered workers and recreates them from saved state.
+See [Restart and state migration](docs/RESTART_AND_MIGRATION.md) when you need it.
+The typed API currently supports Drain.
+
+## Before you use it
+
+This SDK is under development and intended for trusted local Rust code. Its Rust API may change.
+Build the host and logic against the same SDK. See [compatibility and scope](docs/COMPATIBILITY.md) for supported environments.
+
+When input/output formats or meanings change, increment the shared contract version and restart the host too.
+The SDK does not infer compatibility when fields change under the same Rust type name.
+
+DLLs stay loaded by default. The default budget is 32 cumulative load attempts, including failed native loads.
+Restart the development host when the budget is exhausted. [Explicit DLL reclamation](docs/UNLOAD_SAFETY.md) is available,
+but unloading is not automatic, and running work or external effects are not rolled back.
+
+## Read next
+
+- [Typed handlers](docs/TYPED_HANDLERS.md) — Understand the generated code and add handlers.
+- [Troubleshooting](docs/TROUBLESHOOTING.md) — Check why an update, call or shutdown is not completing.
+- [Documentation by task](docs/INDEX.md) — Find framework integration, state migration and internal design guides.
 
 ## License
 
-Licensed under either the [MIT License](LICENSE-MIT) or the
-[Apache License, Version 2.0](LICENSE-APACHE), at your option.
-
-SPDX identifier: `MIT OR Apache-2.0`.
+Choose either the [MIT License](LICENSE-MIT) or [Apache License 2.0](LICENSE-APACHE).
+The SPDX expression is `MIT OR Apache-2.0`.

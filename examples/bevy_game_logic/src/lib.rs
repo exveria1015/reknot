@@ -1,5 +1,5 @@
 use bevy_game_protocol::{Reply, Request, CLOCK, GAME, PUBLISH, TICKS};
-use flow_reload::{RequestContext, ServiceError};
+use reknot::{RequestContext, ServiceError};
 use std::task::Poll;
 
 // Change this, save, and the running host rebuilds in the background.
@@ -30,7 +30,7 @@ fn publish(ctx: &RequestContext, reply: Reply) -> Result<(), ServiceError> {
     Ok(())
 }
 
-#[flow_reload::reload_handler(GAME, state = TICKS)]
+#[reknot::reload_handler(GAME, state = TICKS)]
 async fn game(ctx: RequestContext) -> Result<(), ServiceError> {
     let request: Request =
         serde_json::from_slice(ctx.input()).map_err(|_| ServiceError::INVALID_ARGUMENT)?;

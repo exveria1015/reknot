@@ -7,5 +7,5 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-flow_reload = { path = "../../flow_reload" }
+reknot = { path = "../../reknot" }
 contracts_protocol = { path = "../contracts_protocol" }

@@ -3,7 +3,7 @@ pub mod build;
 
 use bevy::prelude::*;
 use bevy_game_protocol::{Reply, Request, CLOCK, GAME, MAX_MESSAGE, MAX_QUEUE, PUBLISH, TICKS};
-use flow_reload::{
+use reknot::{
     Checkpoint, HostResource, HostResources, PreparedHandler, RequestRouter, RequestTask,
     ResourceId, RouteError, RunStatus, ServiceError, WorkerId,
 };

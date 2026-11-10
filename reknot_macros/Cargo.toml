@@ -1,0 +1,17 @@
+[package]
+name = "reknot_macros"
+version = "0.1.0-rc.1"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Handler generation for the Reknot message ABI"
+readme = "README.md"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full"] }

@@ -1,4 +1,4 @@
-use flow_reload::{
+use reknot::{
     Checkpoint, HostResource, HostResources, RequestRouter, RequestTask, RouterOptions,
     ServiceError, ServiceKey, WorkerId,
 };
@@ -234,8 +234,8 @@ fn run(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let start = Instant::now();
     let logic = path.parent().unwrap().parent().unwrap();
-    let target = flow_reload::development::default_target_dir(logic);
-    let library = flow_reload::development::library_path_in(&target, "tauri_tokio_logic");
+    let target = reknot::development::default_target_dir(logic);
+    let library = reknot::development::library_path_in(&target, "tauri_tokio_logic");
     let options = RouterOptions::default();
     let host = HostResources::new();
     let view = host.register(
@@ -245,7 +245,7 @@ fn run(
             start,
         },
     );
-    let mut watcher = flow_reload::development::start_source_watcher(logic);
+    let mut watcher = reknot::development::start_source_watcher(logic);
     let mut router: Option<RequestRouter> = None;
     let mut requests = Vec::new();
     let mut job: Option<Build> = None;
@@ -298,7 +298,7 @@ fn run(
                 }
             }
         }
-        if flow_reload::development::source_changed(&mut watcher)
+        if reknot::development::source_changed(&mut watcher)
             && std::fs::read_to_string(&path).unwrap_or_default() != last_source
         {
             dirty = Some(Instant::now());
@@ -509,14 +509,14 @@ mod tests {
             .unwrap()
             .as_nanos();
         let root =
-            std::env::temp_dir().join(format!("flow-gui-test-{}-{nonce}", std::process::id()));
+            std::env::temp_dir().join(format!("reknot-gui-test-{}-{nonce}", std::process::id()));
         std::fs::create_dir(&root).unwrap();
         std::fs::create_dir(root.join("src")).unwrap();
         let flow = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../flow_reload")
+            .join("../../../reknot")
             .canonicalize()
             .unwrap();
-        let manifest = format!("[package]\nname = \"tauri_tokio_logic\"\nversion = \"0.1.0\"\nedition = \"2021\"\n[workspace]\n[lib]\ncrate-type = [\"cdylib\"]\n[dependencies]\nflow_reload = {{ path = {}, default-features = false }}\nserde = {{version=\"1\",features=[\"derive\"]}}\nserde_json=\"1\"\n", serde_json::to_string(&flow.to_string_lossy()).unwrap());
+        let manifest = format!("[package]\nname = \"tauri_tokio_logic\"\nversion = \"0.1.0\"\nedition = \"2021\"\n[workspace]\n[lib]\ncrate-type = [\"cdylib\"]\n[dependencies]\nreknot = {{ path = {}, default-features = false }}\nserde = {{version=\"1\",features=[\"derive\"]}}\nserde_json=\"1\"\n", serde_json::to_string(&flow.to_string_lossy()).unwrap());
         std::fs::write(root.join("Cargo.toml"), manifest).unwrap();
         std::fs::write(root.join("src/lib.rs"), source("Test / v1", 1)).unwrap();
         let controller = Controller::from_path(root.join("src/lib.rs")).unwrap();

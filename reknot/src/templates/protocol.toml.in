@@ -1,0 +1,10 @@
+[package]
+name = "{{package}}-protocol"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+reknot.workspace = true
+serde.workspace = true

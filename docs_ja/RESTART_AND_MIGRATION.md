@@ -1,5 +1,7 @@
 # Restart・状態移行・世代の保持上限
 
+[English](../docs/RESTART_AND_MIGRATION.md) | 日本語
+
 Handler ABI 5 の停止・状態移行・上限の契約。
 
 ## 切り替えの単位
@@ -28,11 +30,11 @@ Restart は `restart(candidate, migrate)` を使い、モジュールが管理�
 ## ワーカー側の停止と保存
 
 ```rust
-use flow_reload::{RequestContext, ServiceError, ServiceKey};
+use reknot::{RequestContext, ServiceError, ServiceKey};
 const SERVICE: ServiceKey = ServiceKey::new(1, 1);
 const STATE: ServiceKey = ServiceKey::new(2, 1);
 
-#[flow_reload::reload_handler(SERVICE, state = STATE)]
+#[reknot::reload_handler(SERVICE, state = STATE)]
 async fn worker(ctx: RequestContext) -> Result<(), ServiceError> {
     let saved = ctx.checkpoint().ok_or(ServiceError::INVALID_ARGUMENT)?;
     let state = saved.bytes.clone(); // アプリ固有の復元をここで行う。
@@ -133,7 +135,7 @@ factory は入力・seed をコピーし、サービスとタスク制御を ret
 実行例:
 
 ```powershell
-cargo run -p flow_reload --example restart --locked
+cargo run -p reknot --example restart --locked
 ```
 
 出力は `generation 1: restored 7` → `generation 2: restored 80`。旧値7を停止時に8として保存し、新版の2バイト形式へ移行する。

@@ -1,0 +1,17 @@
+[package]
+name = "{{package}}-host"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[features]
+default = ["reload"]
+reload = ["reknot/dev-tools"]
+static-logic = ["dep:{{package}}-logic"]
+
+[dependencies]
+reknot.workspace = true
+tokio.workspace = true
+{{package}}-protocol = { path = "../protocol" }
+{{package}}-logic = { path = "../logic", optional = true }

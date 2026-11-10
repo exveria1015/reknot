@@ -103,7 +103,7 @@ def main():
     driver = None
     checks = []
     env = os.environ.copy()
-    env["FLOW_RELOAD_CACHE_ROOT"] = str(output / "native-cache")
+    env["REKNOT_CACHE_ROOT"] = str(output / "native-cache")
     flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
     with (output / "driver.log").open("w", encoding="utf-8") as log:
         server = subprocess.Popen(

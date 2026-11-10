@@ -1,0 +1,87 @@
+use reknot::typed::{BridgeOptions, RemoteCall};
+use tokio::io::{AsyncBufReadExt, BufReader};
+
+use {{crate}}_protocol::{module, Message, REPLY};
+
+#[cfg(not(any(feature = "reload", feature = "static-logic")))]
+compile_error!("enable reload or static-logic");
+
+#[cfg(feature = "reload")]
+type Driver = reknot::typed::DevModule;
+#[cfg(not(feature = "reload"))]
+type Driver = reknot::typed::BridgeDriver;
+
+fn maintain(driver: &mut Driver) {
+    #[cfg(feature = "reload")]
+    if let Some(event) = driver.update() {
+        eprintln!("{event}");
+    }
+    #[cfg(not(feature = "reload"))]
+    {
+        use std::future::Future;
+        let _ = std::pin::Pin::new(driver)
+            .poll(&mut std::task::Context::from_waker(std::task::Waker::noop()));
+    }
+}
+
+// Keep the DLL on this thread. The client below is Send + Sync and can also be
+// cloned into a framework's multithreaded event handlers.
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    #[cfg(feature = "reload")]
+    let (client, mut driver) = {
+        use reknot::typed::{DevModule, DevOptions};
+        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../logic/Cargo.toml");
+        eprintln!("Building {{package}}-logic for the first time...");
+        // SAFETY: this local project, its dependencies and future edits are
+        // trusted SDK-native code. External work must follow the SDK contracts.
+        let mut driver = unsafe {
+            DevModule::start(
+                module().builder(),
+                DevOptions::new(manifest, "{{package}}-logic"),
+            )
+        }?;
+        let client = driver.bridge(BridgeOptions::default())?;
+        (client, driver)
+    };
+    #[cfg(all(feature = "static-logic", not(feature = "reload")))]
+    let (client, mut driver) = {
+        // SAFETY: these generated callbacks are statically linked and resident.
+        let host = unsafe { module().builder().from_api({{crate}}_logic::handler_api()) }?;
+        host.bridge(BridgeOptions::default())?
+    };
+    let reply = client.handler(REPLY)?;
+    let mut received = 0;
+    let mut lines = BufReader::new(tokio::io::stdin()).lines();
+    let mut tick = tokio::time::interval(std::time::Duration::from_millis(25));
+    let mut pending: Option<RemoteCall<Result<String, String>>> = None;
+    println!("Ready. Enter text, /count or /quit. Edit logic/src/lib.rs and save.");
+    loop {
+        tokio::select! {
+            _ = tick.tick() => maintain(&mut driver),
+            result = async { pending.as_mut().unwrap().await }, if pending.is_some() => {
+                pending = None;
+                match result {
+                    Ok(Ok(text)) => println!("{text}"),
+                    Ok(Err(message)) => eprintln!("{message}"),
+                    Err(error) => eprintln!("{error}"),
+                }
+            }
+            line = lines.next_line(), if pending.is_none() => {
+                let Some(text) = line? else { break; };
+                if text == "/quit" { break; }
+                if text == "/count" { println!("Host received {received} messages"); continue; }
+                received += 1; // Host state survives DLL updates.
+                pending = Some(reply.call(Message { text, received }));
+            }
+        }
+    }
+    let mut shutdown = client.shutdown();
+    loop {
+        tokio::select! {
+            result = &mut shutdown => { result?; break; }
+            _ = tick.tick() => maintain(&mut driver),
+        }
+    }
+    Ok(())
+}
