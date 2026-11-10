@@ -1,0 +1,15 @@
+[package]
+name = "quiz_logic"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+reknot = { path = "../../reknot", default-features = false, features = ["typed"] }
+quiz_protocol = { path = "../quiz_protocol" }
+serde_json = "1"

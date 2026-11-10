@@ -7,6 +7,8 @@ Use this index to find a topic when you need it during implementation or develop
 
 ## Build an application
 
+- [WebSocket quiz room](QUIZ_ROOM.md) — Play and compare Axum + Reknot with Fastify + JS while editing logic.
+
 - [Typed handlers](TYPED_HANDLERS.md) — Generate a project, write ordinary functions and connect them to the host.
 - [Examples](../examples/README.md) — Find commands and the behavior each sample demonstrates.
 - [Tauri GUI lab](TAURI_GUI_LAB.md) — Edit Rust in a window, reload it and recover from build failures.

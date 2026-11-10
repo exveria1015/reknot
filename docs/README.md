@@ -83,6 +83,8 @@ but unloading is not automatic, and running work or external effects are not rol
 
 ## Read next
 
+- [WebSocket quiz room](QUIZ_ROOM.md) — Try real Axum integration alongside a Fastify/JS version in the same browser.
+
 - [Typed handlers](TYPED_HANDLERS.md) — Understand the generated code and add handlers.
 - [Troubleshooting](TROUBLESHOOTING.md) — Check why an update, call or shutdown is not completing.
 - [Documentation by task](INDEX.md) — Find framework integration, state migration and internal design guides.

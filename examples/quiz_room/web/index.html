@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="theme-color" content="#f6f5f0" />
+    <title>Quiz Room — Reknot × JavaScript</title>
+    <link rel="stylesheet" href="/style.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="Quiz Room ホーム"
+        ><span class="brand-icon">Q</span> QUIZ ROOM</a
+      ><span class="eyebrow"
+        >REKNOT / FRAMEWORK LAB <span class="version">01</span></span
+      >
+    </header>
+    <main>
+      <section class="intro">
+        <div>
+          <p class="eyebrow accent">TWO STACKS. ONE QUIZ.</p>
+          <h1>つながったまま、<br />ルールを変えよう。</h1>
+          <p class="lede">
+            同じ問題を、RustとJavaScriptで。<br />クイズに参加して、更新しても続く部屋を体験できます。
+          </p>
+        </div>
+        <div class="intro-note">
+          <span class="note-number">↻</span>
+          <p>接続はそのまま。<br />得点もそのまま。</p>
+          <small
+            >採点ルールと時計処理を<br />実行中に差し替える実験です。</small
+          >
+        </div>
+      </section>
+      <form id="join-form" class="controls">
+        <label class="name-label" for="name"
+          >プレイヤー名<input
+            id="name"
+            name="name"
+            placeholder="例：こはく"
+            maxlength="20"
+            value="プレイヤー"
+            autocomplete="nickname"
+            required
+        /></label>
+        <button id="join" class="primary" type="submit">
+          両方の部屋に参加 <span>↗</span>
+        </button>
+        <div class="divider"></div>
+        <button id="next" class="secondary" type="button">
+          問題をはじめる <span>→</span>
+        </button>
+        <p class="control-note">別タブで開くと<br />対戦相手を追加できます</p>
+      </form>
+      <p id="notice" class="notice" role="status">
+        まずは名前を入力して参加してください。
+      </p>
+      <section
+        id="rooms"
+        class="rooms"
+        aria-label="二つのクイズルーム"
+      ></section>
+      <section class="experiment">
+        <div class="experiment-heading">
+          <span class="eyebrow">TRY A LIVE EDIT</span>
+          <h2>100点を、150点に。</h2>
+          <p>
+            下のファイルで
+            <code>POINTS</code>
+            を変更して保存。<br />次の回答から新しい採点ルールになります。
+          </p>
+        </div>
+        <div class="edit-paths">
+          <div>
+            <span class="dot rust"></span><strong>Rust</strong
+            ><code>examples/quiz_logic/src/lib.rs</code>
+          </div>
+          <div>
+            <span class="dot js"></span><strong>JS</strong
+            ><code>examples/quiz_room/js/logic.cjs</code>
+          </div>
+          <label class="delay"
+            ><input id="slow" type="checkbox" /> 次の回答を10秒待たせる
+            <small>処理中の更新を試す</small></label
+          >
+        </div>
+      </section>
+      <details class="details">
+        <summary>更新モードと比較条件</summary>
+        <div class="details-body">
+          <p>
+            <b>Restart（初期設定）</b
+            >：処理中の回答を中止してから、新しい時計ワーカーを起動。時計のカウントは引き継ぎます。中止した回答は自動再送しません。
+          </p>
+          <p>
+            <b>Drain</b
+            >：処理中の回答と時計ワーカーは古い実装で続行。新しい回答に更新が反映されます。起動時に
+            <code>QUIZ_RELOAD_MODE=drain</code> を設定できます。
+          </p>
+          <p>
+            両方とも同じ画面・問題を使用。Rustは再ビルドしたDLLをReknotで検証・切り替え、JSはモジュールを読み直し、明示した契約を検査します。接続・部屋・得点は更新対象の外です。部屋は各サーバーで独立し、切断したプレイヤーの得点は消えます。
+          </p>
+        </div>
+      </details>
+      <footer>
+        <span
+          >REKNOT <span class="muted">×</span> AXUM
+          <span class="muted">/</span> FASTIFY
+          <span class="muted">×</span> JAVASCRIPT</span
+        ><span>LOCAL EXPERIMENT · NO ACCOUNT NEEDED</span>
+      </footer>
+    </main>
+    <template id="room-template">
+      <article class="room">
+        <header class="room-header">
+          <div>
+            <span class="stack-number"></span>
+            <h2 class="stack-title"></h2>
+            <p class="stack-subtitle"></p>
+          </div>
+          <span class="connection">接続中…</span>
+        </header>
+        <div class="room-meta">
+          <span class="mode"></span><span class="rule-label">—</span
+          ><span class="points">— pt</span>
+        </div>
+        <div class="question-area">
+          <div class="question-meta">
+            <span class="question-number">WAITING ROOM</span
+            ><span class="timer">—</span>
+          </div>
+          <h3 class="question">参加するとクイズを開始できます。</h3>
+          <div class="choices"></div>
+          <p class="explanation"></p>
+        </div>
+        <div class="result" role="status">
+          あなたの回答結果がここに表示されます。
+        </div>
+        <div class="scores">
+          <div class="section-label">
+            <span>LEADERBOARD</span><span class="player-count">0 PLAYERS</span>
+          </div>
+          <ol class="players"></ol>
+        </div>
+        <div class="telemetry">
+          <span>接続 <b class="session">—</b></span
+          ><span>採点 <b class="generation">—</b></span
+          ><span>時計 <b class="clock-gen">—</b> / <b class="ticks">0</b></span>
+        </div>
+        <div class="reload-row">
+          <span class="reload-status">準備中</span
+          ><button class="reconnect" type="button" hidden>再接続</button>
+        </div>
+        <details class="event-details">
+          <summary>イベントログ</summary>
+          <pre class="events">接続を待っています。</pre>
+        </details>
+      </article>
+    </template>
+  </body>
+</html>

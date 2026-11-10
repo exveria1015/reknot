@@ -7,6 +7,8 @@
 
 ## アプリを作る
 
+- [WebSocketクイズルーム](QUIZ_ROOM.md) — 遊びながら編集し、Axum + ReknotとFastify + JSを比較する。
+
 - [型付きハンドラー入門](TYPED_HANDLERS.md) — プロジェクト生成、通常の関数での実装、ホストへの接続。
 - [サンプル一覧](../examples/README.md) — 実行コマンドと、それぞれのサンプルで試せること。
 - [Tauri GUI Lab](TAURI_GUI_LAB.md) — 画面内で Rust を編集し、更新やビルド失敗からの復旧を試す。

@@ -6,6 +6,11 @@ tags and their verification records. A version entry alone does not announce pub
 
 ## Unreleased
 
+- Playable WebSocket quiz comparison: Axum + Reknot and Fastify + JavaScript share
+  questions/UI, with host-owned connections and scores, editable scoring rules,
+  registered clock checkpoints, Drain/Restart and failure recovery. Includes a
+  two-server launcher, Japanese/English guides and Windows/Linux process tests.
+
 ## 0.1.0-rc.2
 
 Source candidate for the higher-level API improvements; publication is separate.

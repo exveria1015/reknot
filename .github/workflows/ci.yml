@@ -167,6 +167,21 @@ jobs:
           cargo run -p typed_bot_host --example framework_bridge --no-default-features --features static-logic --locked
       - name: Workspace tests without the GUI application
         run: cargo test --workspace --exclude tauri_tokio --all-features --locked
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Axum and Fastify WebSocket quiz, live reload and recovery
+        run: |
+          npm ci --prefix examples/quiz_room/js --no-audit --no-fund
+          cargo clippy -p quiz_host -p quiz_logic -p quiz_protocol --all-targets --locked -- -D warnings
+          node --check examples/quiz_room/web/app.js
+          node examples/quiz_room/check.mjs
+      - name: Save quiz diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quiz-${{ matrix.os }}
+          path: target/quiz-check/
       - name: Native asynchronous I/O and multiple owner threads
         run: cargo test -p threaded_io_host --test native_threaded_io --locked -- --ignored --test-threads=1
       - name: Native multi-service contracts and typed initialization
