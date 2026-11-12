@@ -474,14 +474,12 @@ impl Future for BridgeDriver {
             Poll::Ready(())
         } else {
             if more {
-                cx.waker().wake_by_ref();
+                wakes.push(cx.waker().clone());
             }
             Poll::Pending
         };
         // Retire completed work before invoking arbitrary host executor Wakers.
-        for wake in wakes {
-            wake.wake();
-        }
+        wake_all(wakes);
         status
     }
 }
@@ -504,8 +502,22 @@ impl Drop for BridgeDriver {
             wakes.extend(running.state.finish(Err(Error::BridgeClosed)));
         }
         wakes.extend(self.shared.exit(false));
-        for wake in wakes {
-            wake.wake();
+        wake_all(wakes);
+    }
+}
+
+fn wake_all(wakes: Vec<Waker>) {
+    let mut failure = None;
+    for wake in wakes {
+        if let Err(payload) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| wake.wake()))
+        {
+            failure.get_or_insert(payload);
+        }
+    }
+    if let Some(payload) = failure {
+        // Drop can also run while another panic is already unwinding.
+        if !std::thread::panicking() {
+            std::panic::resume_unwind(payload);
         }
     }
 }

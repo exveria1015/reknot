@@ -6,6 +6,38 @@ tags and their verification records. A version entry alone does not announce pub
 
 ## Unreleased
 
+- Wake parked typed calls on explicit cancellation, so selective Future
+  combinators finish cleanup and unblock Restart. Repeated cancellation is idle.
+- Schedule another bounded cleanup pass for requests dropped during cleanup,
+  preserving queued work if the scheduling Waker panics or reenters cleanup.
+- Contain the final executor Waker destructor panic when a host notification
+  races with request completion, including a simultaneous notification panic.
+- Rearm the low-level `SourceWatcher` after source/project directory recreation;
+  also observe replacement of manifest/build scripts and newly created inputs.
+- Notify each `RequestContext::cancelled()` and `ChildStop::cancelled()` wait
+  independently, including inside selective Future combinators. Stop and Restart
+  no longer stall on these composed waits. Dropped waits release their Wakers.
+- Add an optional cancellation ABI 1 tail to task-control ABI 2, preserving the
+  base and generation-services prefixes. Rebuild host and logic together: new
+  request cancellation waits fail explicitly on a host without this tail.
+- Contain executor Waker notification and destructor panics on the originating
+  side of the C ABI, including nested cancellation notifications during Restart.
+- Schedule a new activity poll when a child registers another child or starts an
+  asynchronous service, so notification-driven requests do not stall.
+- Notify every `CancellationToken::cancelled()` waiter independently, release
+  dropped registrations, and synchronize registration with concurrent cancellation.
+- Drive generated-host and quiz bridge requests directly from executor wakes;
+  source/build maintenance keeps its separate cadence. Console hosts accept quit
+  and EOF during a request and wait for registered cancellation cleanup.
+- Watch Rust modules beside custom Cargo targets, excluding build output, and
+  run metadata/build commands from the selected manifest's directory so local
+  Cargo configuration applies consistently.
+- Refresh source watches when input directories are created, removed or replaced.
+  New `.cargo` directories and recreated source directories keep triggering
+  reloads, including recovery after metadata or build failures.
+- Preserve other bridge result/shutdown notifications when one Waker panics.
+  A service worker unwinding from a result notification closes admission, fails
+  queued work and notifies join instead of leaving clients waiting indefinitely.
 - Playable WebSocket quiz comparison: Axum + Reknot and Fastify + JavaScript share
   questions/UI, with host-owned connections and scores, editable scoring rules,
   registered clock checkpoints, Drain/Restart and failure recovery. Includes a

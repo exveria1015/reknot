@@ -17,7 +17,9 @@
 ビルド中も、現在の世代へ要求を渡せます。すでに受け付けた処理は、その世代で完了まで続きます。
 追加の編集通知を受け取った場合は、古くなったビルド結果を破棄して再ビルドします。
 
-`update()` はブリッジ・登録ワーカーの実行とキャンセル後の終了処理も進めます。
+`update()`は`DevModule::bridge`で作成したブリッジ・登録ワーカーの実行とキャンセル後の終了処理も進めます。
+要求をその周期から独立させる場合は`development.host().bridge(...)`を使い、返された`BridgeDriver`を
+executorで直接駆動します。終了待ちの間もdriverを駆動してください。
 既定は Drain です。`DevOptions::with_reload_mode(ReloadMode::Restart)` で [型付き Restart](TYPED_RESTART.md) を選べます。
 事前検査後に受付を止め、ルートと子処理の終了を待って切り替えます。停止開始後の失敗では受付停止を維持します。
 Restart 待機中の編集はその完了後に処理します。開始済みの停止を巻き戻すことはありません。
@@ -30,15 +32,18 @@ Cargo の依存関係から、ロジックとローカル依存先の入力を�
 
 | 監視するもの | 範囲 |
 | --- | --- |
-| Rust ソース | ロジックとローカル依存先の `src/`、Cargo ターゲットのソース |
+| Rust ソース | ロジックとローカル依存先の`src/`、Cargoターゲットの入口と、そのディレクトリ配下の隣接・入れ子の`.rs`モジュール |
 | crate の設定 | 各 `Cargo.toml` と `build.rs` |
-| workspace の設定 | `Cargo.toml`、`Cargo.lock`、既存の `.cargo` 内の `config` / `config.toml` |
+| Cargo の設定 | workspaceの`Cargo.toml`・`Cargo.lock`、指定manifestのディレクトリから祖先までにある`.cargo`内の`config` / `config.toml`。起動後に作ったディレクトリも対象 |
 
-`target/`、コピーした DLL、ログはビルド入力に含めません。
-ビルド出力先とソースが重なる構成は拒否します。独自の build script でも、ソース配下への生成は避けてください。
+Cargoのmetadataとbuildは指定manifestのディレクトリから起動し、ホストの起動場所によらず対象の設定を読みます。
+`implementation/lib.rs`やcrateルートの`lib.rs`など、標準の`src/`以外の配置にも対応します。
+各crateの`target/`、設定されたCargo出力先、`.git`は入力から除外し、その出力先内にソースを置く構成は拒否します。
+独自のbuild scriptでも、監視するソース配下への生成は避けてください。
 
 監視範囲外の include ファイルや独自生成入力を変更したら、監視対象のソースも保存するか、ホストを再起動します。
-新しい `.cargo` ディレクトリを作った場合も再起動してください。
+監視対象のディレクトリを作成・削除・置換すると、OSへの監視登録を更新します。
+同じパスへの作り直しや、ディレクトリの欠落・設定の誤りによるビルド失敗の後も、修正して保存すれば更新を検出します。
 
 依存宣言が変わると監視範囲を更新し、新しい監視の下で再ビルドしてから適用します。
 ビルドは `--locked` で行うため、依存の追加で `Cargo.lock` の更新が必要になったら、通常の Cargo 操作で先に更新してください。
@@ -97,6 +102,12 @@ Restart のチェックポイントは、既定で1ワーカーあたり1 MiBで
 `service_host` は同期ビルド、Tauri サンプルは子プロセスでの背景ビルドを使います。
 `dev-tools` feature の `reknot::development` には、ビルド・パス・監視の補助があります。
 独自のビルド手順で作った成果物を渡すこともできます。
+
+低レイヤーの`SourceWatcher`の監視範囲は、そのcrateの`src/`・`Cargo.toml`・`build.rs`です。
+`source_changed`を呼び続けると、ディレクトリの削除・再作成後に監視を登録し直します。
+起動時に`src/`がない場合、manifest・build scriptの置換、新しいbuild scriptの作成にも対応します。
+`src/`外の無関係なファイルや`.git`内の変更ではビルドを起こしません。ビルド出力は`src/`外に置いてください。
+独自のCargoターゲット・ローカル依存先・Cargo設定の探索には、`DevModule`または独自の監視設定を使います。
 
 ビルド後に `unsafe prepare(path)` で候補をロード・検査し、`activate` で Drain、
 または `restart` で登録ワーカーの停止・移行・再生成を行います。

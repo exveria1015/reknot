@@ -62,6 +62,9 @@ The host executor's Waker must also remain valid independently of any reloadable
 
 When notification races with completion, a host notification acquired before detachment may still arrive.
 It cannot reenter the DLL to run a completed request. Detaching a notification also does not mark unfinished registered work as complete.
+The host gate contains executor notification and final Waker destructor panics
+separately, including when completion detaches the target during notification.
+This applies to unwinding panics; it cannot recover from `panic=abort`.
 
 Use `ctx.host_notification()?` for a custom C notification path.
 `HostNotification::as_raw()` returns a borrowed `HostWaker` descriptor.

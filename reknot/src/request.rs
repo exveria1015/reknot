@@ -1,8 +1,9 @@
 use crate::Checkpoint;
 use crate::{HostWaker, RunStatus, Services, TaskHandle, TaskVTable};
 use reknot_abi::services::{
-    AccessGenerationLocalFn, HandlerHeader, HostTaskControl, HostTaskVTable, HostTaskVTableExt,
-    MakeGenerationLocalFn, GENERATION_SERVICES_ABI_VERSION, TASK_CONTROL_ABI_VERSION,
+    AccessGenerationLocalFn, HandlerHeader, HostTaskControl, HostTaskVTable,
+    HostTaskVTableCancellation, HostTaskVTableExt, MakeGenerationLocalFn, CANCELLATION_ABI_VERSION,
+    GENERATION_SERVICES_ABI_VERSION, TASK_CONTROL_ABI_VERSION,
 };
 use reknot_abi::services::{HandlerRequest, ResourceId, ServiceError, ServiceKey};
 use std::ffi::c_void;
@@ -48,6 +49,27 @@ impl TaskControl {
     pub(crate) fn notification(&self) -> Result<crate::HostNotification, ServiceError> {
         let extension = self.extension()?;
         unsafe { crate::HostNotification::owned((extension.notification)(self.0.data)) }
+    }
+    fn cancelled(&self) -> Result<crate::FfiFuture, ServiceError> {
+        self.extension()?;
+        unsafe {
+            let header = self.0.vtable.cast::<HandlerHeader>().read();
+            if header.struct_size < std::mem::size_of::<HostTaskVTableCancellation>() as u32 {
+                return Err(ServiceError::UNSUPPORTED_OPERATION);
+            }
+            let pointer = self.0.vtable.cast::<HostTaskVTableCancellation>();
+            let cancellation = std::ptr::addr_of!((*pointer).cancellation).read();
+            if cancellation.abi_version != CANCELLATION_ABI_VERSION
+                || cancellation.struct_size
+                    < std::mem::size_of::<HostTaskVTableCancellation>() as u32
+            {
+                return Err(ServiceError::UNSUPPORTED_OPERATION);
+            }
+            let make = std::ptr::addr_of!((*pointer).cancelled).read();
+            // The host task and its registration are destroyed before this
+            // wait releases its borrow of the retained task control.
+            crate::FfiFuture::new(make(self.0.data)).ok_or(ServiceError::FAILED)
+        }
     }
     pub(crate) fn with_local(
         &self,
@@ -256,16 +278,23 @@ impl RequestContext {
         unsafe { ((*self.control.0.vtable).stop_requested)(self.control.0.data) }
     }
 
-    /// Woken by the owning RequestTask when the router requests shutdown.
+    /// Wait for shutdown, registering this future's own Waker. Supports nested
+    /// Future combinators and multiple concurrent waits on the same context.
+    /// Dropping a wait unregisters it without cancelling the request.
+    ///
+    /// # Panics
+    /// A host without cancellation ABI 1 cannot provide notifications. Rebuild
+    /// host and logic together; legacy controls still support stop_requested().
+    /// Generated handlers catch this panic and report a failed request.
     pub async fn cancelled(&self) {
-        std::future::poll_fn(|_| {
-            if self.stop_requested() {
-                std::task::Poll::Ready(())
-            } else {
-                std::task::Poll::Pending
-            }
-        })
-        .await
+        if self.stop_requested() {
+            return;
+        }
+        let wait = self.control.cancelled().expect(
+            "RequestContext::cancelled requires cancellation ABI 1; rebuild the host and logic together",
+        );
+        let status = wait.await;
+        assert_eq!(status, RunStatus::Done, "host cancellation wait failed");
     }
 
     pub fn checkpoint(&self) -> Option<&Checkpoint> {

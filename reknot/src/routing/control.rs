@@ -1,12 +1,13 @@
 use crate::activity::Entry;
-use crate::generation::CodeLease;
+use crate::generation::{enter, CodeLease};
 use crate::generation_scope::GenerationScope;
 use crate::notification::WakeGate;
 use crate::{ActivityHandle, MAX_MANAGED_ACTIVITIES};
 use crate::{ServiceError, ServiceKey};
 use reknot_abi::services::{
-    AccessGenerationLocalFn, HandlerHeader, HostTaskControl, HostTaskVTable, HostTaskVTableExt,
-    MakeGenerationLocalFn, GENERATION_SERVICES_ABI_VERSION, TASK_CONTROL_ABI_VERSION,
+    AccessGenerationLocalFn, HandlerHeader, HostTaskControl, HostTaskVTable,
+    HostTaskVTableCancellation, HostTaskVTableExt, MakeGenerationLocalFn, CANCELLATION_ABI_VERSION,
+    GENERATION_SERVICES_ABI_VERSION, TASK_CONTROL_ABI_VERSION,
 };
 use std::cell::{Cell, RefCell};
 use std::ffi::c_void;
@@ -36,6 +37,7 @@ pub(super) struct Control {
     pub failure: Cell<Option<ServiceError>>,
     activities: RefCell<Vec<Entry>>,
     polling: Cell<usize>,
+    cancellation: crate::CancellationToken,
     lease: Option<CodeLease>,
     scope: Weak<GenerationScope>,
     pub(super) notification_gate: Arc<WakeGate>,
@@ -58,6 +60,7 @@ impl Control {
             failure: Cell::new(None),
             activities: RefCell::new(Vec::new()),
             polling: Cell::new(0),
+            cancellation: crate::CancellationToken::default(),
             lease,
             scope,
             notification_gate: Arc::new(WakeGate::default()),
@@ -65,6 +68,9 @@ impl Control {
     }
     pub fn stop(&self) {
         self.stop.set(true);
+        // A nested Future may have a different Waker from the root. Notify
+        // those registrations as well, while their DLL remains guarded.
+        self.notify_stop();
         let waker = self.waker.borrow().clone();
         if let Some(waker) = waker {
             waker.wake();
@@ -79,8 +85,17 @@ impl Control {
     pub fn activity_count(&self) -> usize {
         self.activities.borrow().len() + self.polling.get()
     }
+    fn notify_stop(&self) {
+        let _call = enter(&self.lease);
+        self.cancellation.cancel();
+    }
     pub fn poll_activities(&self, cx: &mut Context<'_>) -> bool {
         self.notification_gate.update(cx.waker());
+        if self.stop.get() {
+            // close() defers notification until polling, including when the
+            // root was dropped but a child still owns a RequestContext.
+            self.notify_stop();
+        }
         // Do not hold a RefCell borrow over foreign callbacks. Registration during
         // polling is bounded too; new entries are driven on the following poll.
         let entries = std::mem::take(&mut *self.activities.borrow_mut());
@@ -101,14 +116,21 @@ impl Control {
             }
         }
         self.polling.set(0);
-        self.activities.borrow_mut().extend(pending);
+        let added = {
+            let mut activities = self.activities.borrow_mut();
+            let added = !activities.is_empty();
+            activities.extend(pending);
+            added
+        };
         // User Wakers can panic. Restore ownership before notifying the root so
         // recovery cannot accidentally lose unjoined registrations.
+        if added {
+            // New registrations have not been polled yet and cannot provide
+            // their own wake. Schedule another bounded pass, not an inline loop.
+            cx.waker().wake_by_ref();
+        }
         if wake_root {
-            let waker = self.waker.borrow().clone();
-            if let Some(waker) = waker {
-                waker.wake();
-            }
+            self.stop();
         }
         self.activity_count() == 0
     }
@@ -169,6 +191,14 @@ unsafe extern "C" fn release(data: *mut c_void) {
 unsafe extern "C" fn stopped(data: *mut c_void) -> bool {
     (&*data.cast::<Control>()).stop.get()
 }
+unsafe extern "C" fn cancelled(data: *mut c_void) -> crate::TaskHandle {
+    let control = &*data.cast::<Control>();
+    let token = control.cancellation.clone();
+    crate::request::make_handler_future(Box::pin(async move {
+        token.cancelled().await;
+        Ok(())
+    }))
+}
 unsafe extern "C" fn checkpoint(
     data: *mut c_void,
     schema: ServiceKey,
@@ -190,22 +220,29 @@ unsafe extern "C" fn checkpoint(
     *control.checkpoint.borrow_mut() = Some(Checkpoint { schema, bytes });
     0
 }
-static VTABLE: HostTaskVTableExt = HostTaskVTableExt {
-    base: HostTaskVTable {
-        header: HandlerHeader {
-            abi_version: TASK_CONTROL_ABI_VERSION,
+static VTABLE: HostTaskVTableCancellation = HostTaskVTableCancellation {
+    base: HostTaskVTableExt {
+        base: HostTaskVTable {
+            header: HandlerHeader {
+                abi_version: TASK_CONTROL_ABI_VERSION,
+                struct_size: std::mem::size_of::<HostTaskVTableCancellation>() as u32,
+            },
+            retain,
+            release,
+            stop_requested: stopped,
+            checkpoint,
+            register_activity,
+        },
+        extension: HandlerHeader {
+            abi_version: GENERATION_SERVICES_ABI_VERSION,
             struct_size: std::mem::size_of::<HostTaskVTableExt>() as u32,
         },
-        retain,
-        release,
-        stop_requested: stopped,
-        checkpoint,
-        register_activity,
+        notification,
+        with_local,
     },
-    extension: HandlerHeader {
-        abi_version: GENERATION_SERVICES_ABI_VERSION,
-        struct_size: std::mem::size_of::<HostTaskVTableExt>() as u32,
+    cancellation: HandlerHeader {
+        abi_version: CANCELLATION_ABI_VERSION,
+        struct_size: std::mem::size_of::<HostTaskVTableCancellation>() as u32,
     },
-    notification,
-    with_local,
+    cancelled,
 };

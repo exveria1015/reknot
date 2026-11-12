@@ -12,7 +12,9 @@ fn directory_in(base: PathBuf, label: &str) -> PathBuf {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let root = base.join(format!("reknot-new-{}-{nonce}-{label}", std::process::id()));
+    // These fixtures also run below extracted .crate archives. Keep enough
+    // path length for nested Cargo build-script executables on Windows.
+    let root = base.join(format!("rn-{:x}-{nonce:x}-{label}", std::process::id()));
     std::fs::create_dir_all(&root).unwrap();
     root
 }
@@ -277,29 +279,136 @@ fn installed_git_cli_generates_a_portable_static_and_native_application() {
         vec!["--no-default-features", "--features", "static-logic"],
         vec![],
     ] {
-        use std::io::Write;
-        let mut child = Command::new("cargo")
-            .current_dir(&project)
-            .args(["run", "--locked", "--offline"])
-            .args(features)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
-        child
-            .stdin
-            .take()
-            .unwrap()
-            .write_all(b"hello\n/quit\n")
-            .unwrap();
-        let output = child.wait_with_output().unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
+        checked(
+            Command::new("cargo")
+                .current_dir(&project)
+                .args(["build", "--locked", "--offline"])
+                .args(features),
         );
-        assert!(String::from_utf8_lossy(&output.stdout).contains("logic-v1 / message 1: HELLO"));
+        let mut app = Application::start(
+            Command::new(host_executable(&project, "portable-app-host"))
+                .current_dir(&project)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped()),
+        );
+        app.wait_for("Ready.");
+        app.send("hello");
+        app.wait_for("logic-v1 / message 1: HELLO");
+        app.send("/quit");
+        app.finish();
+    }
+}
+
+fn host_executable(project: &Path, name: &str) -> PathBuf {
+    let metadata = checked(Command::new("cargo").current_dir(project).args([
+        "metadata",
+        "--no-deps",
+        "--format-version",
+        "1",
+        "--locked",
+        "--offline",
+    ]));
+    let metadata: serde_json::Value = serde_json::from_slice(&metadata.stdout).unwrap();
+    PathBuf::from(metadata["target_directory"].as_str().unwrap())
+        .join("debug")
+        .join(format!("{name}{}", std::env::consts::EXE_SUFFIX))
+}
+
+#[test]
+#[ignore = "runs generated native/static hosts with delayed maintenance and pending requests"]
+fn generated_console_uses_wakes_and_accepts_quit_and_eof_during_a_request() {
+    let project = directory("wake").join("bot");
+    assert!(create(
+        &project,
+        &[
+            "--name",
+            "notify-bot",
+            "--sdk-path",
+            env!("CARGO_MANIFEST_DIR")
+        ]
+    )
+    .status
+    .success());
+    let host = project.join("host/src/main.rs");
+    let source = std::fs::read_to_string(&host).unwrap();
+    // Holding maintenance for an hour is a deterministic check that request
+    // progress is independent of that timer, not a machine-specific benchmark.
+    std::fs::write(&host, source.replace("from_millis(25)", "from_secs(3600)")).unwrap();
+    std::fs::write(
+        project.join("logic/src/lib.rs"),
+        r#"
+use notify_bot_protocol::{module, Message, REPLY};
+async fn yield_once() {
+    let mut first = true;
+    std::future::poll_fn(|cx| {
+        if std::mem::take(&mut first) {
+            cx.waker().wake_by_ref();
+            std::task::Poll::Pending
+        } else { std::task::Poll::Ready(()) }
+    }).await;
+}
+#[reknot::handler(REPLY)]
+async fn reply(context: reknot::RequestContext, message: Message) -> Result<String, String> {
+    if message.text == "wait" {
+        context.spawn_child(|stop| async move {
+            eprintln!("CHILD_STARTED");
+            stop.cancelled().await;
+            for _ in 0..3 { yield_once().await; }
+            eprintln!("CHILD_JOINED");
+            Ok(())
+        }).unwrap();
+        std::future::pending::<()>().await;
+    }
+    for _ in 0..3 { yield_once().await; }
+    Ok(format!("reply {}", message.received))
+}
+reknot::export_handlers!(module(), [reply]);
+"#,
+    )
+    .unwrap();
+    checked(
+        Command::new("cargo")
+            .current_dir(&project)
+            .args(["generate-lockfile", "--offline"]),
+    );
+    let executable = host_executable(&project, "notify-bot-host");
+    for features in [
+        vec!["--no-default-features", "--features", "static-logic"],
+        vec![],
+    ] {
+        checked(
+            Command::new("cargo")
+                .current_dir(&project)
+                .args(["build", "--locked", "--offline"])
+                .args(features),
+        );
+        for quit in [true, false] {
+            let mut app = Application::start(
+                Command::new(&executable)
+                    .current_dir(&project)
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped()),
+            );
+            app.wait_for("Ready.");
+            app.send("fast");
+            app.wait_for_timeout("reply 1", Duration::from_secs(5));
+            app.send("wait");
+            app.wait_for_timeout("CHILD_STARTED", Duration::from_secs(5));
+            app.send("busy");
+            app.wait_for_timeout("Request in progress", Duration::from_secs(5));
+            app.send("/count");
+            app.wait_for_timeout("Host received 2 messages", Duration::from_secs(5));
+            if quit {
+                app.send("/quit");
+            } else {
+                app.child.stdin.take();
+            }
+            app.wait_for_timeout("CHILD_JOINED", Duration::from_secs(5));
+            // For /quit, deliberately leave stdin open until the host exits.
+            app.wait_exit();
+        }
     }
 }
 
@@ -419,7 +528,10 @@ impl Application {
         writeln!(self.child.stdin.as_mut().unwrap(), "{text}").unwrap();
     }
     fn wait_for(&mut self, expected: &str) {
-        let deadline = Instant::now() + Duration::from_secs(120);
+        self.wait_for_timeout(expected, Duration::from_secs(120));
+    }
+    fn wait_for_timeout(&mut self, expected: &str, timeout: Duration) {
+        let deadline = Instant::now() + timeout;
         loop {
             let line = self
                 .lines
@@ -436,6 +548,9 @@ impl Application {
     }
     fn finish(&mut self) {
         self.child.stdin.take();
+        self.wait_exit();
+    }
+    fn wait_exit(&mut self) {
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             if let Some(status) = self.child.try_wait().unwrap() {

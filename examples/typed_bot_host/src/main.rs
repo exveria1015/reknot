@@ -40,7 +40,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut lines = BufReader::new(tokio::io::stdin()).lines();
     let mut tick = tokio::time::interval(std::time::Duration::from_millis(25));
     let mut pending: Option<reknot::typed::Call<Result<String, String>>> = None;
-    loop {
+    let input_result = loop {
         tokio::select! {
             _ = tick.tick() => {
                 #[cfg(feature = "reload")]
@@ -56,9 +56,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Err(error) => eprintln!("{error}"),
                 }
             }
-            line = lines.next_line(), if pending.is_none() => {
-                let Some(text) = line? else { break; };
-                if text == "/quit" { break; }
+            line = lines.next_line() => {
+                let text = match line {
+                    Ok(Some(text)) => text,
+                    Ok(None) => break Ok(()),
+                    Err(error) => break Err(error),
+                };
+                if text == "/quit" { break Ok(()); }
+                if pending.is_some() {
+                    eprintln!("Request in progress; wait for its reply before sending more text.");
+                    continue;
+                }
                 pending = Some(if text == "/summary" {
                     summary.call(history.clone())
                 } else {
@@ -71,7 +79,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 });
             }
         }
-    }
+    };
+    // Dropping the root queues its registered cleanup before we await it.
+    drop(pending);
     std::future::poll_fn(|cx| host.poll_cleanup(cx)).await;
+    input_result?;
     Ok(())
 }

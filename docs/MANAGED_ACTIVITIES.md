@@ -23,6 +23,18 @@ The creation closure is not called until the first poll after successful registr
 they cannot borrow the root's stack or Future.
 Run the example with `cargo run -p reknot --example managed_children --locked`.
 
+Both `RequestContext::cancelled()` and `ChildStop::cancelled()` register each
+waiting Future independently. They work inside selective combinators such as
+`FuturesUnordered`, including multiple waits on the same context or cloned child
+token. Repolling updates that wait's Waker; dropping it releases its registration.
+Cancellation waits do not consume the 64 managed-activity slots or spawn work.
+
+Request cancellation notifications use an optional cancellation ABI 1 tail after
+the existing task-control and generation-services prefixes. Rebuild host and logic
+together. On an older host without that tail, an outstanding `cancelled()` wait
+panics explicitly (generated handlers report Error); it does not read missing
+fields or silently stall. The synchronous `stop_requested()` query remains available.
+
 For a JoinHandle from an independent runtime or a callback registration, use
 `ctx.register_activity(adapter)` and `unsafe impl ManagedActivity`.
 The adapter implements two operations:
@@ -72,6 +84,9 @@ let pending = reknot::poll_cancelled_requests(&mut cx).is_pending();
 
 `poll_workers` and Restart also drive this queue. The queue belongs to the owner thread,
 and `poll_cancelled_requests` can keep driving it after Router Drop.
+Each pass polls the requests present at its start. If their cleanup drops more
+requests, it schedules another pass after restoring queue ownership. Existing
+I/O waits use their own notifications; pending cleanup alone does not self-wake.
 These calls may advance unfinished work from other Routers, but the return value of `poll_workers` describes only the target Router's registered workers.
 Keep polling while work remains after a stop request.
 The DLL generation, adapters and required owned data remain alive throughout cleanup.

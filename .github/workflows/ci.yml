@@ -133,7 +133,7 @@ jobs:
       - name: Formatting
         run: |
           cargo fmt --all -- --check
-          rustfmt --edition 2021 --check reknot/tests/fixtures/handler.rs reknot/tests/fixtures/abi_v5.rs reknot/tests/fixtures/reclamation.rs reknot/tests/fixtures/managed_logic.rs reknot/tests/fixtures/typed_logic.rs reknot/tests/fixtures/typed_evolution.rs
+          rustfmt --edition 2021 --check reknot/tests/fixtures/handler.rs reknot/tests/fixtures/abi_v5.rs reknot/tests/fixtures/reclamation.rs reknot/tests/fixtures/managed_logic.rs reknot/tests/fixtures/typed_logic.rs reknot/tests/fixtures/typed_evolution.rs reknot/tests/fixtures/cancellation_logic.rs
       - uses: actions/setup-python@v5
         with:
           python-version: '3.x'
@@ -162,8 +162,8 @@ jobs:
         run: |
           cargo test -p reknot --test native_typed --locked -- --ignored --test-threads=1
           cargo clippy -p typed_bot_host -p typed_bot_logic -p typed_bot_protocol --all-targets --all-features --locked -- -D warnings
-          cargo test -p reknot --no-default-features --features typed --test typed_handlers --test typed_services --test typed_bridge --test typed_contracts --test typed_restart --locked
-          cargo test -p typed_bot_host --no-default-features --features static-logic --locked
+          cargo test -p reknot --no-default-features --features typed --test typed_handlers --test typed_services --test typed_bridge --test typed_contracts --test typed_restart --test typed_cancellation --locked
+          cargo test -p typed_bot_host --no-default-features --features static-logic --locked -- --include-ignored
           cargo run -p typed_bot_host --example framework_bridge --no-default-features --features static-logic --locked
       - name: Workspace tests without the GUI application
         run: cargo test --workspace --exclude tauri_tokio --all-features --locked

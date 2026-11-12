@@ -281,3 +281,86 @@ fn response_waker_panic_does_not_leave_a_consumed_call_in_the_driver() {
     assert!(poll(&mut driver).is_pending());
     assert_eq!(ready(next).unwrap(), (2, 1));
 }
+
+#[test]
+fn response_waker_panic_still_notifies_other_results_and_shutdown() {
+    struct PanicWake;
+    impl Wake for PanicWake {
+        fn wake(self: Arc<Self>) {
+            panic!("response notification failed");
+        }
+    }
+    for abandon in [false, true] {
+        let host = host();
+        let (client, mut driver) = host.bridge(options(2, 2)).unwrap();
+        let handle = client.handler(RUN).unwrap();
+        let mut first = handle.call(1);
+        let mut second = handle.call(2);
+        let bad = Waker::from(Arc::new(PanicWake));
+        let results = Arc::new(CountWake(AtomicUsize::new(0)));
+        let good = Waker::from(results.clone());
+        assert!(Pin::new(&mut first)
+            .poll(&mut Context::from_waker(&bad))
+            .is_pending());
+        assert!(Pin::new(&mut second)
+            .poll(&mut Context::from_waker(&good))
+            .is_pending());
+        let mut shutdown = client.close();
+        let exits = Arc::new(CountWake(AtomicUsize::new(0)));
+        let exit = Waker::from(exits.clone());
+        assert!(Pin::new(&mut shutdown)
+            .poll(&mut Context::from_waker(&exit))
+            .is_pending());
+        if abandon {
+            assert!(
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(driver))).is_err()
+            );
+            assert!(matches!(ready(first), Err(Error::BridgeClosed)));
+            assert!(matches!(ready(second), Err(Error::BridgeClosed)));
+            assert!(matches!(ready(shutdown), Err(Error::BridgeClosed)));
+        } else {
+            assert!(poll(&mut driver).is_pending());
+            assert!(
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| poll(&mut driver)))
+                    .is_err()
+            );
+            assert_eq!(ready(first).unwrap(), (1, 1));
+            assert_eq!(ready(second).unwrap(), (2, 1));
+            assert!(ready(shutdown).is_ok());
+        }
+        assert_eq!(results.0.load(Ordering::Acquire), 1);
+        assert_eq!(exits.0.load(Ordering::Acquire), 1);
+        assert_eq!(host.in_flight(), 0);
+    }
+}
+
+#[test]
+fn driver_scheduling_panic_does_not_hide_a_completed_reply() {
+    struct PanicWake;
+    impl Wake for PanicWake {
+        fn wake(self: Arc<Self>) {
+            panic!("owner scheduling failed");
+        }
+    }
+    let host = host();
+    let (client, mut driver) = host.bridge(options(2, 1)).unwrap();
+    let handle = client.handler(RUN).unwrap();
+    let mut first = handle.call(1);
+    let second = handle.call(2);
+    let count = Arc::new(CountWake(AtomicUsize::new(0)));
+    let result_waker = Waker::from(count.clone());
+    assert!(Pin::new(&mut first)
+        .poll(&mut Context::from_waker(&result_waker))
+        .is_pending());
+    assert!(poll(&mut driver).is_pending());
+    let bad = Waker::from(Arc::new(PanicWake));
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        Pin::new(&mut driver).poll(&mut Context::from_waker(&bad))
+    }))
+    .is_err());
+    assert_eq!(count.0.load(Ordering::Acquire), 1);
+    assert_eq!(ready(first).unwrap(), (1, 1));
+    assert!(poll(&mut driver).is_pending());
+    assert!(poll(&mut driver).is_pending());
+    assert_eq!(ready(second).unwrap(), (2, 1));
+}

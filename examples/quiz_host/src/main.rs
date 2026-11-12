@@ -416,7 +416,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     host.start_worker(WorkerId(1), CLOCK, (), STATE, &ClockState::default())?;
     let initial_info = host.handler(INFO)?.call(()).await?;
     room.lock().unwrap().rules = Some(initial_info);
-    let client = development.bridge(BridgeOptions {
+    let (client, mut driver) = host.bridge(BridgeOptions {
         capacity: 128,
         max_in_flight: 32,
     })?;
@@ -479,6 +479,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     loop {
         tokio::select! {
             _ = &mut signal => break,
+            _ = &mut driver => break,
             _ = tick.tick() => {
                 if let Some(event) = development.update() {
                     eprintln!("{event}");
@@ -500,11 +501,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     shutdown_tx.send_replace(true);
-    let closing = client.shutdown();
-    tokio::pin!(closing);
-    loop {
-        tokio::select! { result = &mut closing => { result?; break; }, _ = tick.tick() => { development.update(); } }
-    }
+    let (_, result) = tokio::join!(driver, client.shutdown());
+    result?;
     // Stop watching before joining workers so a pending edit cannot recreate one
     // during shutdown. Bridge requests have already joined above.
     drop(development);

@@ -17,6 +17,9 @@ cargo run
 
 After the initial build, wait for `Ready.`, then enter some text.
 Use `/count` to see the input count and `/quit` to exit.
+They remain available during a request. `/quit` or EOF cancels the request and
+waits for registered children. Send ordinary messages one at a time; input while
+busy is rejected with a message.
 
 Commit the `Cargo.lock` created on the first run. Use `cargo run --locked` for subsequent runs.
 
@@ -90,6 +93,8 @@ cargo run
 
 初回ビルドが終わって `Ready.` と表示されたら、文字を入力してください。
 `/count` で入力件数を確認でき、`/quit` で終了します。
+処理中もこれらのコマンドを受け付け、`/quit`とEOFでは要求をキャンセルして登録した子処理の終了を待ちます。
+通常のメッセージは返信を待ってから次を送ってください。処理中の通常入力はメッセージを表示して拒否します。
 
 初回に作られる `Cargo.lock` もバージョン管理します。以降は `cargo run --locked` で起動できます。
 

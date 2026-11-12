@@ -38,6 +38,7 @@ See [build configurations](API_REFERENCE.md#build-configurations) for the settin
 | Typed contract | v2; schemas in both Serde directions, `JsonSchema` required |
 | Host services ABI | 2 |
 | Task-control ABI | 2 |
+| Cancellation notifications | Optional tail ABI 1; required by pending `RequestContext::cancelled()` waits |
 | Host and logic | Build together against the same SDK and compatible target/toolchain |
 | Service, input, init and checkpoint formats | Application-defined, explicitly versioned where applicable |
 

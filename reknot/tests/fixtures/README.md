@@ -22,3 +22,8 @@ host async notifications and destructor failure across the real allocation/FFI b
 `typed_logic.rs` is a real SDK typed module compiled by `native_typed`. The test
 creates its local helper dependency in an isolated project and checks source
 watching, typed return values, Drain, build recovery and contract rejection.
+
+`cancellation_logic.rs` is shared by static regression tests and a real SDK DLL.
+It uses `FuturesUnordered` to check nested/multiple cancellation waits, dropped
+registrations, root/child cleanup and Restart. Native tests also reclaim both
+generations after every cancellation registration has been released.

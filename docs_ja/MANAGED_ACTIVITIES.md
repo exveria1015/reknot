@@ -23,6 +23,16 @@ ctx.spawn_child(|stop| async move {
 ルートのスタックや Future への借用は持てません。
 実行できる例は `cargo run -p reknot --example managed_children --locked` です。
 
+`RequestContext::cancelled()` と `ChildStop::cancelled()` は、待機Futureごとに
+通知先を登録します。`FuturesUnordered` のように通知された要素だけをpollする組み合わせや、
+同じcontext・複製した子トークンからの複数待機にも対応します。再pollではその待機のWakerを更新し、
+Dropでその登録だけを解除します。停止待機は管理対象の64枠を消費せず、新しい処理もspawnしません。
+
+リクエストの停止通知は、既存のタスク制御・世代サービスの先頭レイアウトに続く、
+任意の cancellation ABI 1 拡張を使います。ホストとロジックを一緒に再ビルドしてください。
+この拡張のない旧ホストで停止前に `cancelled()` を待つと明示的にpanicし、生成ハンドラーはErrorを返します。
+未提供の領域を読んだり、通知なしに待ち続けたりしません。同期的な `stop_requested()` は引き続き使用できます。
+
 独立したランタイムの JoinHandle やコールバック登録には、
 `ctx.register_activity(adapter)` と `unsafe impl ManagedActivity` を使います。
 アダプターは次の2操作を実装します。
@@ -72,6 +82,9 @@ let pending = reknot::poll_cancelled_requests(&mut cx).is_pending();
 
 `poll_workers` と Restart もこのキューを進めます。キューは所有スレッド単位で、
 Router の Drop 後にも `poll_cancelled_requests` で進められます。
+1回の呼び出しでは開始時点の要求をpollします。その終了処理中に別の要求がDropされた場合は、
+キューへ所有を戻してから次のpollを通知します。既にpollしたI/O待ちは自身の通知を使うため、
+未完了の要求があるだけでは自己通知を繰り返しません。
 他の Router の未完了処理も進めますが、`poll_workers` の返値は対象 Router の登録ワーカーについての値です。
 停止後も待つ処理があれば、ホストはこの polling を継続してください。
 DLL 世代・アダプター・必要な所有データはその間保持します。

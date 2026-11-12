@@ -9,14 +9,16 @@ use std::task::Waker;
 #[derive(Default)]
 struct State {
     closed: bool,
-    waker: Option<Arc<Waker>>,
+    waker: Option<Waker>,
 }
 #[derive(Default)]
 pub(crate) struct WakeGate(Mutex<State>);
 impl WakeGate {
     pub(crate) fn update(&self, waker: &Waker) {
         // No executor clone/drop/wake runs while the mutex is held.
-        let new = Arc::new(waker.clone());
+        // The wrapper's clones only retain an Arc. Its wake and final Drop
+        // contain executor panics, including a last release racing with revoke.
+        let new = crate::task::unwind_safe_waker(waker);
         let old = {
             let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
             if state.closed {
@@ -42,8 +44,9 @@ impl WakeGate {
             .waker
             .clone();
         if let Some(waker) = waker {
-            // An executor panic cannot cross this notification's C ABI.
-            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| waker.wake_by_ref()));
+            // Both notification and final destruction are protected by the
+            // stored wrapper; neither can unwind across this C ABI callback.
+            waker.wake();
         }
     }
     pub(crate) fn raw(self: &Arc<Self>) -> HostWaker {
