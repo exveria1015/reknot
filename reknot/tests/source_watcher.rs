@@ -2,18 +2,33 @@
 use reknot::development::{source_changed, start_source_watcher, SourceWatcher};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 fn fixture(with_source: bool) -> PathBuf {
-    let root = std::env::temp_dir().join(format!(
-        "reknot-source-watch-{}-{}",
-        std::process::id(),
+    fixture_at(
+        with_source,
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir_all(&root).unwrap();
+            .as_nanos(),
+    )
+}
+fn fixture_at(with_source: bool, timestamp: u128) -> PathBuf {
+    static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
+    let root = loop {
+        let sequence = NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed);
+        let candidate = std::env::temp_dir().join(format!(
+            "reknot-source-watch-{}-{timestamp}-{sequence}",
+            std::process::id()
+        ));
+        // Parallel tests can observe the same clock tick; never reuse an existing fixture.
+        match fs::create_dir(&candidate) {
+            Ok(()) => break candidate,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => panic!("cannot create fixture {}: {error}", candidate.display()),
+        }
+    };
     fs::write(
         root.join("Cargo.toml"),
         "[package]\nname='watch-probe'\nversion='0.0.0'\n",
@@ -23,6 +38,24 @@ fn fixture(with_source: bool) -> PathBuf {
         create_source(&root);
     }
     root
+}
+
+#[test]
+fn simultaneous_fixture_timestamps_do_not_share_source_directories() {
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let roots = std::thread::scope(|scope| {
+        let workers: Vec<_> = (0..5)
+            .map(|_| scope.spawn(|| fixture_at(true, timestamp)))
+            .collect();
+        workers
+            .into_iter()
+            .map(|worker| worker.join().unwrap())
+            .collect::<std::collections::HashSet<_>>()
+    });
+    assert_eq!(roots.len(), 5);
 }
 fn create_source(root: &Path) {
     fs::create_dir(root.join("src")).unwrap();
