@@ -123,6 +123,14 @@ The Linux GUI job also launches a real WebView with `tauri-driver 2.1.0` and Xvf
 A Python test using only the standard library checks example selection and saving, Drain/Restart, request submission,
 build errors and recovery, and continuity of the host and counter.
 It restores sample sources on exit and saves screenshots and diagnostic logs as artifacts.
+The client uses a persistent HTTP/1.1 connection and consumes each response before
+the next command. CI runs the full scenario three times with `--strict-transport`,
+so even a read disconnect fails without retrying. Each `target/gui-smoke/run-*`
+directory contains `requests.jsonl` with request times, paths, attempts, HTTP status
+or errors, plus `driver.log`, screenshots and a successful `result.json` with
+transport counts. Outside strict mode, only a read may retry once; session changes
+and clicks are never replayed. `python scripts/test-check-gui.py` exercises these
+rules over real loopback sockets without requiring a WebView.
 Visual review and interactive Windows checks remain separate from this automated test.
 
 ## Bevy game integration

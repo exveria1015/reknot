@@ -122,6 +122,13 @@ Linux GUI ジョブでは `tauri-driver 2.1.0` と Xvfb で実際の WebView も
 標準ライブラリだけの Python 試験で、編集例の選択・保存、Drain／Restart、要求送信、
 ビルドエラーと修復、同じホストとカウンターの継続を検査します。
 終了時にサンプルのソースを復元し、画面と診断ログを artifact に保存します。
+HTTP/1.1 の接続を維持し、応答を最後まで読んでから次の要求を送ります。
+CI では `--strict-transport` を指定して全シナリオを3回実行し、読み取りも再試行せず、
+最初の切断で失敗させます。各 `target/gui-smoke/run-*` に、要求時刻・パス・試行番号・
+HTTP ステータスまたはエラーを記録する `requests.jsonl`、`driver.log`、画面、
+成功時の通信回数付き `result.json` を保存します。通常モードの再試行は読み取りの1回だけで、
+セッション変更やクリックは再送しません。`python scripts/test-check-gui.py` は、
+WebView を使わず実際の loopback 接続でこれらの規則を検査します。
 画面の目視評価と Windows での実操作は、この自動試験と分けて確認してください。
 
 ## Bevy ゲーム統合

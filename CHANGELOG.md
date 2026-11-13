@@ -6,7 +6,13 @@ tags and their verification records. A version entry alone does not announce pub
 
 ## Unreleased
 
-No unreleased changes.
+- Keep the GUI smoke client's HTTP/1.1 connection open instead of forwarding
+  per-request `Connection: close` through tauri-driver's native connection pool.
+  CI repeats the real WebView test three times with read retries disabled and
+  retains per-request transport diagnostics.
+- Skip known excluded build-output notifications before Windows path
+  canonicalization, avoiding unnecessary opens while Cargo changes its output.
+  Add a regression check that the dedicated Cargo target exists before watching.
 
 ## 0.1.0-rc.2
 

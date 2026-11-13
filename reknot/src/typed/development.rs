@@ -554,8 +554,16 @@ impl Project {
                             EventKind::Modify(_) | EventKind::Create(_) | EventKind::Remove(_)
                         ) =>
                     {
-                        let paths: Vec<_> =
-                            event.paths.iter().map(|path| normalize(path)).collect();
+                        // Ignore known output paths before canonicalize opens
+                        // them on Windows. Cargo can be renaming a temporary
+                        // output directory at the same time. Unmatched spelling
+                        // still goes through normalization and the filters below.
+                        let paths: Vec<_> = event
+                            .paths
+                            .iter()
+                            .filter(|path| !inputs.excludes(path))
+                            .map(|path| normalize(path))
+                            .collect();
                         let topology_changed =
                             matches!(
                                 event.kind,
@@ -710,6 +718,47 @@ fn normalize(path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    #[cfg(not(miri))]
+    fn discovery_prepares_actual_cargo_target_before_watch_registration() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory =
+            std::env::temp_dir().join(format!("reknot-prewatch-{}-{nonce:x}", std::process::id()));
+        std::fs::create_dir(&directory).unwrap();
+        std::fs::create_dir(directory.join(".cargo")).unwrap();
+        std::fs::write(
+            directory.join("Cargo.toml"),
+            "[package]\nname = \"prewatch_outputs\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\
+             [lib]\npath = \"lib.rs\"\ncrate-type = [\"cdylib\"]\n[workspace]\n",
+        )
+        .unwrap();
+        std::fs::write(
+            directory.join("Cargo.lock"),
+            "version = 4\n[[package]]\nname = \"prewatch_outputs\"\nversion = \"0.0.0\"\n",
+        )
+        .unwrap();
+        std::fs::write(directory.join("lib.rs"), "").unwrap();
+        std::fs::write(
+            directory.join(".cargo/config.toml"),
+            "[build]\ntarget-dir = \"Final/Artifacts\"\nbuild-dir = \"Intermediate\"\n",
+        )
+        .unwrap();
+        // No watcher or compiler has run yet. Check the actual --target-dir,
+        // not just Cargo metadata's roots: missing this leaf caused CI failures.
+        let project = Project::discover(&DevOptions::new(
+            directory.join("Cargo.toml"),
+            "prewatch_outputs",
+        ))
+        .unwrap();
+        assert!(project.target.ends_with("reknot-typed/prewatch_outputs"));
+        assert!(project.target.is_dir());
+        assert!(!project.target.join("debug").exists());
+        assert!(project.inputs.excludes(&project.target));
+    }
+
     #[test]
     fn legacy_metadata_without_separate_build_directory_is_accepted() {
         let metadata: Metadata = serde_json::from_str(

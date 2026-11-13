@@ -82,7 +82,9 @@ jobs:
         env:
           LIBGL_ALWAYS_SOFTWARE: '1'
         run: |
-          xvfb-run -a python scripts/check-gui.py
+          for attempt in 1 2 3; do
+            xvfb-run -a python scripts/check-gui.py --strict-transport --output "target/gui-smoke/run-$attempt"
+          done
           git diff --exit-code -- examples/tauri_tokio_logic/src/lib.rs
       - name: Save GUI smoke diagnostics
         if: always() && runner.os == 'Linux'

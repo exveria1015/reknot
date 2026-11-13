@@ -2,7 +2,8 @@
 
 import argparse
 import base64
-from http.client import RemoteDisconnected
+from datetime import datetime, timezone
+from http.client import HTTPConnection, RemoteDisconnected
 import json
 import os
 from pathlib import Path
@@ -11,16 +12,19 @@ import socket
 import subprocess
 import sys
 import time
-from urllib.error import HTTPError
-from urllib.request import Request, urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
 ELEMENT = "element-6066-11e4-a52e-4f735466cecf"
 
 
 class WebDriver:
-    def __init__(self, application):
+    def __init__(self, application, *, port=4444, read_retries=1, diagnostics=None):
         self.session = None
+        self.connection = HTTPConnection("127.0.0.1", port, timeout=120)
+        self.read_retries = read_retries
+        self.diagnostics = diagnostics
+        self.requests = 0
+        self.retries = 0
         session = self.request(
             "POST",
             "/session",
@@ -37,32 +41,52 @@ class WebDriver:
 
     def request(self, method, path, payload=None):
         data = None if payload is None else json.dumps(payload).encode()
-        request = Request(
-            "http://127.0.0.1:4444" + path,
-            data=data,
-            method=method,
-            headers={"Content-Type": "application/json"},
-        )
+        # urllib forces Connection: close on every request. tauri-driver 2.1.0
+        # forwards that hop-by-hop header to its pooled native-driver client,
+        # which can reuse the connection while the native peer is closing it.
+        # Keep one HTTP/1.1 connection and fully consume each response instead.
         # A disconnect leaves clicks and session mutations ambiguous. Only
         # reads, including WebDriver's POST element lookup, may be repeated.
         read_only = method == "GET" or (
             method == "POST" and re.fullmatch(r"/session/[^/]+/element", path)
         )
-        for attempt in range(2):
+        attempts = 1 + (self.read_retries if read_only else 0)
+        for attempt in range(attempts):
+            started = time.monotonic()
+            self.requests += 1
+            record = {
+                "time": datetime.now(timezone.utc).isoformat(),
+                "request": self.requests, "method": method, "path": path,
+                "attempt": attempt + 1,
+            }
             try:
-                with urlopen(request, timeout=120) as response:
-                    value = json.load(response)["value"]
-                break
-            except HTTPError as error:
-                raise RuntimeError(error.read().decode(errors="replace")) from error
-            except RemoteDisconnected:
-                if not read_only or attempt:
+                self.connection.request(
+                    method, path, body=data, headers={"Content-Type": "application/json"},
+                )
+                with self.connection.getresponse() as response:
+                    body = response.read()
+                    record["status"] = response.status
+                if not 200 <= record["status"] < 300:
+                    raise RuntimeError(body.decode(errors="replace"))
+                value = json.loads(body)["value"]
+                if isinstance(value, dict) and value.get("error"):
+                    raise RuntimeError(json.dumps(value))
+                return value
+            except Exception as error:
+                # A failed or partially consumed response must never leave a
+                # connection available for the next command.
+                self.connection.close()
+                record["error"] = f"{type(error).__name__}: {error}"
+                if not isinstance(error, RemoteDisconnected) or attempt + 1 == attempts:
                     raise
+                self.retries += 1
                 print(f"Retrying WebDriver read after connection closed: {method} {path}",
                       file=sys.stderr)
-        if isinstance(value, dict) and value.get("error"):
-            raise RuntimeError(json.dumps(value))
-        return value
+            finally:
+                record["elapsed_ms"] = round((time.monotonic() - started) * 1000, 3)
+                if self.diagnostics is not None:
+                    self.diagnostics.write(json.dumps(record) + "\n")
+                    self.diagnostics.flush()
 
     def command(self, method, path, payload=None):
         return self.request(method, "/session/" + self.session + path, payload)
@@ -98,9 +122,12 @@ class WebDriver:
         path.write_bytes(base64.b64decode(self.command("GET", "/screenshot")))
 
     def close(self):
-        if self.session:
-            self.request("DELETE", "/session/" + self.session)
+        try:
+            if self.session:
+                self.request("DELETE", "/session/" + self.session)
+        finally:
             self.session = None
+            self.connection.close()
 
 
 def main():
@@ -108,18 +135,23 @@ def main():
     parser.add_argument("--binary", type=Path, default=ROOT / "target/debug" / (
         "tauri_tokio.exe" if os.name == "nt" else "tauri_tokio"
     ))
+    parser.add_argument("--output", type=Path, default=ROOT / "target/gui-smoke")
+    parser.add_argument("--strict-transport", action="store_true",
+                        help="Fail on the first disconnect, including read-only commands")
     options = parser.parse_args()
     application = options.binary.resolve(strict=True)
-    output = ROOT / "target/gui-smoke"
+    output = options.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     source = ROOT / "examples/tauri_tokio_logic/src/lib.rs"
     original = source.read_bytes()
     driver = None
     checks = []
+    primary_error = None
     env = os.environ.copy()
     env["REKNOT_CACHE_ROOT"] = str(output / "native-cache")
     flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-    with (output / "driver.log").open("w", encoding="utf-8") as log:
+    with (output / "driver.log").open("w", encoding="utf-8") as log, \
+            (output / "requests.jsonl").open("w", encoding="utf-8") as requests:
         server = subprocess.Popen(
             ["tauri-driver"], cwd=ROOT, env=env, stdout=log,
             stderr=subprocess.STDOUT, creationflags=flags,
@@ -136,7 +168,8 @@ def main():
                     if time.monotonic() >= deadline:
                         raise TimeoutError("tauri-driver did not listen")
                     time.sleep(0.1)
-            driver = WebDriver(application)
+            driver = WebDriver(application, read_retries=0 if options.strict_transport else 1,
+                               diagnostics=requests)
             driver.wait(lambda: driver.number("#counter") > 0, "initial counter")
             host = driver.text("#host-id")
             checks.append("window startup and live counter")
@@ -198,12 +231,8 @@ def main():
             assert driver.number("#counter") >= before
             driver.screenshot(output / "recovered.png")
             checks.append("repair recovers in same host")
-            (output / "result.json").write_text(
-                json.dumps({"host": host, "checks": checks}, indent=2) + "\n",
-                encoding="utf-8",
-            )
-            print(json.dumps({"passed": checks}))
-        except Exception:
+        except Exception as error:
+            primary_error = error
             if driver:
                 try:
                     driver.screenshot(output / "failure.png")
@@ -213,15 +242,28 @@ def main():
         finally:
             try:
                 if driver:
-                    driver.close()
+                    try:
+                        driver.close()
+                    except Exception as error:
+                        if primary_error is None:
+                            raise
+                        print(f"WebDriver cleanup also failed: {error}", file=sys.stderr)
             finally:
-                source.write_bytes(original)
-                server.terminate()
                 try:
-                    server.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    server.kill()
-                    server.wait()
+                    source.write_bytes(original)
+                finally:
+                    server.terminate()
+                    try:
+                        server.wait(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        server.kill()
+                        server.wait()
+    result = {"host": host, "checks": checks, "transport": {
+        "requests": driver.requests, "retries": driver.retries,
+        "strict": options.strict_transport,
+    }}
+    (output / "result.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+    print(json.dumps(result))
 
 
 if __name__ == "__main__":
