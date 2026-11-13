@@ -78,28 +78,22 @@ Counts and bytes describe the selected copy files. They do not guarantee an equi
 CLI exit codes are 0 for a complete scan or operation, 1 for argument, root, lock or similar errors, and 2 for partial results or failures.
 Normally skipped InUse or Legacy entries are not errors.
 
-## Cache compatibility across the rename
+## Cache configuration and format
 
-The default cache root is now `<temp>/reknot/`. Existing files under
-`<temp>/flow-reloader/` are not moved or deleted automatically. Inspect that
-directory explicitly with `reknot-cache inspect --root <old-absolute-root>`.
-If you choose to clean it, use the same root with `clean --apply`; only eligible
-managed sessions are removed, under the same lease and permission checks.
+`REKNOT_CACHE_ROOT` is the only environment variable used to select the cache root.
+When unset, the default is `<temp>/reknot/`. The CLI's explicit `--root` takes
+precedence over the environment. Earlier environment-variable aliases are ignored.
 
-The old names below are retained intentionally for compatibility with existing
-configuration and files; new applications should use the Reknot names.
+Sessions use the `reknot-cache-v1` marker in `session.meta`, under `managed-v1/`.
+Inspection and cleanup recognize only this marker. Cache metadata from earlier
+source candidates is intentionally unsupported; existing files are not migrated
+or deleted automatically, including those in a previously selected cache root.
 
-| Identifier | Contract |
-| --- | --- |
-| `REKNOT_CACHE_ROOT` | Preferred environment variable; takes precedence whenever set |
-| `FLOW_RELOAD_CACHE_ROOT` | Fallback only when `REKNOT_CACHE_ROOT` is unset |
-| `flow-reloader-cache-v1` | Persisted marker for the unchanged `managed-v1` format, used for both existing and new sessions |
-
-The persisted marker identifies the disk format, not the current SDK name or
-version. Renaming it would require a separate format migration. An unrecognized
-marker remains `Unknown` and is not deleted by `clean --apply`; old PID-only
-entries remain `Legacy` and are also preserved. Neither environment-variable
-compatibility nor the rename changes the lease and permission checks.
+An unsupported marker is reported as `Unknown` during inspection. `clean --apply`
+preserves those files and reports an incomplete result (exit code 2); an entry
+already in `trash` is reported as `PartialFailure`. PID-only entries remain
+`Legacy` and are also preserved. Supported sessions still require the lease and
+permission checks before deletion.
 
 ## Sessions and exclusive access
 
@@ -147,6 +141,8 @@ Tests use separate processes for the parent host, child host and cleanup CLI to 
 - Namespace contention, concurrent apply from two CLIs, lease acquisition after inspection, corrupt or oversized metadata, missing leases, unknown files, legacy entries and scan limits.
 - Junctions and sentinel files at link targets remain untouched; partial trash states, actual file-deletion failure and retry.
 - Read-only CLI defaults and deletion only through explicit apply.
+- Reknot-only environment configuration, the current marker written by real hosts,
+  and preservation of unsupported session/trash metadata and copies by CLI apply.
 
 Miri also checks pure Rust ownership and execution paths, but does not replace file-lock, DACL or real-DLL tests.
 The two ignored functions are child-process entry points launched by the parent tests.

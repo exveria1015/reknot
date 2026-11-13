@@ -4,7 +4,7 @@ fn run() -> Result<bool, Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
     let command = args.next().unwrap_or_else(|| "inspect".into());
     if command == "--help" || command == "-h" {
-        println!("reknot-cache [inspect|clean] [--apply] [--root ABSOLUTE_PATH] [--max-sessions N] [--max-entries N]\nDefault: inspect/dry-run. Only managed-v1 sessions are eligible; legacy/unknown/in-use entries are skipped.");
+        println!("reknot-cache [inspect|clean] [--apply] [--root ABSOLUTE_PATH] [--max-sessions N] [--max-entries N]\nDefault: inspect/dry-run. Only reknot-cache-v1 sessions in managed-v1 are eligible; legacy/unknown/in-use entries are skipped.");
         return Ok(true);
     }
     if command != "inspect" && command != "clean" {

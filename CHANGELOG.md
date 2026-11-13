@@ -60,13 +60,15 @@ tags and their verification records. A version entry alone does not announce pub
   New `.cargo` directories and recreated source directories keep triggering
   reloads, including recovery after metadata or build failures.
 
-### Naming and compatibility
+### Cache configuration and format (breaking)
 
-- Use Reknot in the introductory documentation. Retain the former name in
-  migration/history notes and compatibility identifiers: `FLOW_RELOAD_CACHE_ROOT`
-  is used only when `REKNOT_CACHE_ROOT` is unset, and `flow-reloader-cache-v1`
-  remains the persisted marker for existing and new `managed-v1` sessions.
-  Unknown formats and PID-only legacy entries remain excluded from deletion.
+- Use Reknot names throughout the SDK and documentation. `REKNOT_CACHE_ROOT` is
+  the only cache-root environment variable; earlier aliases are no longer read.
+  Its unset default remains `<temp>/reknot/`, and CLI `--root` takes precedence.
+- Write and recognize only `reknot-cache-v1` session metadata under `managed-v1/`.
+  Earlier source-candidate caches are unsupported and are not migrated or cleaned.
+  Unknown session/trash formats and PID-only entries are preserved. Configure the
+  current cache root explicitly if an earlier alias selected a custom location.
 
 ## 0.1.0-rc.2
 
@@ -111,14 +113,12 @@ See the [release procedure](docs/RELEASING.md) for the final verification gates.
 
 ### Breaking API changes
 
-- Rename flow-reloader to Reknot. The core crates and source directories are now
-  `reknot`, `reknot_abi` and `reknot_macros`; replace former `flow_reload`,
-  `interface` and `hot_macro` dependencies and imports, then rebuild host and logic.
+- Adopt the Reknot core crate and source directory names: `reknot`, `reknot_abi`
+  and `reknot_macros`. Rebuild host and logic together against the renamed SDK.
   The CLI commands are `reknot-new` and `reknot-cache`. The service example uses
   `REKNOT_ADDR`. Default cache copies now live under `<temp>/reknot/` and use
-  `REKNOT_CACHE_ROOT`; the former `FLOW_RELOAD_CACHE_ROOT` remains a fallback alias.
-  Existing cache data is not moved automatically. Its format marker is retained,
-  so `reknot-cache inspect --root <old-absolute-root>` can inspect previous sessions.
+  `REKNOT_CACHE_ROOT`. The cache compatibility initially retained in this source
+  candidate is superseded by the breaking cache changes under Unreleased.
   The native ABI tables and `hot_handler_api` entry point are unchanged.
 - Use `reload_handler`, `HostResources`, `RequestRouter` and `RequestTask` for
   both native reload and static linking. The earlier runner, direct/snapshot

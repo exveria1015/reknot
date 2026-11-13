@@ -382,6 +382,11 @@ fn real_dll_retention_and_live_normal_and_forced_exit_cleanup() {
         let opt = options(&area.join("cache"));
         let before = inspect_cache(&opt).unwrap();
         assert_eq!(before.entries[0].status, CacheStatus::InUse);
+        assert!(
+            fs::read_to_string(before.entries[0].path.join("session.meta"))
+                .unwrap()
+                .starts_with("reknot-cache-v1\n")
+        );
         assert_eq!(before.files, 5);
         assert!(before.logical_bytes > 0);
         assert_eq!(clean_cache(&opt).unwrap().deleted_files, 0);
@@ -413,7 +418,7 @@ fn synthetic(root: &Path, index: u32, trash: bool) -> PathBuf {
     fs::write(
         path.join("session.meta"),
         format!(
-            "flow-reloader-cache-v1\nid={id}\npid={}\ncreated=1\n",
+            "reknot-cache-v1\nid={id}\npid={}\ncreated=1\n",
             std::process::id()
         ),
     )
@@ -600,32 +605,97 @@ fn unrelated_write_acl_is_refused_without_repairing_existing_root() {
 }
 
 #[test]
-fn renamed_cache_cli_accepts_legacy_environment_and_prefers_reknot_root() {
+fn cache_root_uses_only_reknot_environment() {
+    if let Some(expected) = std::env::var_os("REKNOT_CACHE_TEST_EXPECTED_ROOT") {
+        assert_eq!(CacheOptions::default().root, PathBuf::from(expected));
+        return;
+    }
     let _serial = serial();
     let area = exited_area();
     let root = area.join("cache");
-    let legacy_session = synthetic(&root, 60, false);
-    let binary = env!("CARGO_BIN_EXE_reknot-cache");
-    for new_name in [false, true] {
-        let mut command = Command::new(binary);
-        command.env_remove("REKNOT_CACHE_ROOT");
-        if new_name {
-            command
-                .env("REKNOT_CACHE_ROOT", &root)
-                .env("FLOW_RELOAD_CACHE_ROOT", "invalid-relative-cache");
+    // Check the default without inspecting or cleaning the user's real cache.
+    // The removed alias is deliberately present only as a rejected input.
+    for configured in [false, true] {
+        let expected = if configured {
+            root.clone()
         } else {
-            command.env("FLOW_RELOAD_CACHE_ROOT", &root);
+            std::env::temp_dir().join("reknot")
+        };
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command
+            .args(["--exact", "cache_root_uses_only_reknot_environment"])
+            .env_remove("REKNOT_CACHE_ROOT")
+            .env("FLOW_RELOAD_CACHE_ROOT", area.join("removed-alias"))
+            .env("REKNOT_CACHE_TEST_EXPECTED_ROOT", expected);
+        if configured {
+            command.env("REKNOT_CACHE_ROOT", &root);
         }
         let output = command.output().unwrap();
         assert!(
             output.status.success(),
-            "{}",
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        assert!(stdout.contains(&format!("READ ONLY: {}", root.display())));
-        assert!(stdout.contains("Eligible"));
-        assert!(legacy_session.exists());
+    }
+    let session = synthetic(&root, 60, false);
+    let output = Command::new(env!("CARGO_BIN_EXE_reknot-cache"))
+        .env("REKNOT_CACHE_ROOT", &root)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains(&format!("READ ONLY: {}", root.display())));
+    assert!(stdout.contains("Eligible"));
+    assert!(session.exists());
+}
+
+#[test]
+fn previous_cache_marker_is_preserved_without_migration_or_cleanup() {
+    let _serial = serial();
+    let area = exited_area();
+    let root = area.join("cache");
+    let current = synthetic(&root, 70, false);
+    let previous: Vec<_> = [false, true]
+        .into_iter()
+        .enumerate()
+        .map(|(index, trash)| {
+            let path = synthetic(&root, 71 + index as u32, trash);
+            let metadata = fs::read_to_string(path.join("session.meta"))
+                .unwrap()
+                .replacen("reknot-cache-v1", "flow-reloader-cache-v1", 1);
+            fs::write(path.join("session.meta"), &metadata).unwrap();
+            (path, metadata)
+        })
+        .collect();
+    let report = inspect_cache(&options(&root)).unwrap();
+    assert!(report
+        .entries
+        .iter()
+        .any(|entry| entry.path == current && entry.status == CacheStatus::Eligible));
+    for (path, _) in &previous {
+        assert!(report
+            .entries
+            .iter()
+            .any(|entry| entry.path == *path && entry.status == CacheStatus::Unknown));
+    }
+    let output = Command::new(env!("CARGO_BIN_EXE_reknot-cache"))
+        .args(["clean", "--apply", "--root"])
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert!(!current.exists());
+    for (path, metadata) in &previous {
+        assert_eq!(
+            fs::read_to_string(path.join("session.meta")).unwrap(),
+            *metadata
+        );
+        assert_eq!(
+            fs::read(path.join("copies/0000000000000001.dll")).unwrap(),
+            b"copy"
+        );
+        assert!(path.join("lease.lock").exists());
     }
 }
 
