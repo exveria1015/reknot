@@ -6,6 +6,13 @@ tags and their verification records. A version entry alone does not announce pub
 
 ## Unreleased
 
+No unreleased changes.
+
+## 0.1.0-rc.2
+
+Source release candidate for typed contracts and Restart, the WebSocket quiz,
+notification-driven hosts and reload lifecycle hardening. Publication is separate.
+
 ### Examples and host driving
 
 - Playable WebSocket quiz comparison: Axum + Reknot and Fastify + JavaScript share
@@ -70,10 +77,6 @@ tags and their verification records. A version entry alone does not announce pub
   Unknown session/trash formats and PID-only entries are preserved. Configure the
   current cache root explicitly if an earlier alias selected a custom location.
 
-## 0.1.0-rc.2
-
-Source candidate for the higher-level API improvements; publication is separate.
-
 ### Breaking typed API changes
 
 - Inputs, outputs and worker state now require `JsonSchema`. Add `#[reknot::schema]`
@@ -118,7 +121,7 @@ See the [release procedure](docs/RELEASING.md) for the final verification gates.
   The CLI commands are `reknot-new` and `reknot-cache`. The service example uses
   `REKNOT_ADDR`. Default cache copies now live under `<temp>/reknot/` and use
   `REKNOT_CACHE_ROOT`. The cache compatibility initially retained in this source
-  candidate is superseded by the breaking cache changes under Unreleased.
+  candidate is superseded by the breaking cache changes in `0.1.0-rc.2`.
   The native ABI tables and `hot_handler_api` entry point are unchanged.
 - Use `reload_handler`, `HostResources`, `RequestRouter` and `RequestTask` for
   both native reload and static linking. The earlier runner, direct/snapshot

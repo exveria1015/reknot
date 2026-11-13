@@ -9,10 +9,12 @@ are independent of the SDK version. A source RC does not publish crates to crate
 
 ## Select the source revision
 
-Use `main` as the integration and default branch. Include the rename, typed API,
-framework bridge, project generator, documentation and verification scripts in the
-candidate. Keep the working tree clean and record `git rev-parse HEAD` in the
-release notes. Do not move a published tag to a different commit.
+Use `main` as the integration and default branch. This candidate includes the
+`feature/websocket-quiz-room` implementation: typed contracts and Restart, the
+WebSocket quiz, notification-driven hosts, cancellation and source-watch fixes,
+Reknot-only cache configuration, the project generator and their documentation and
+verification scripts. Keep the working tree clean and record `git rev-parse HEAD`
+in the release notes. Do not move a published tag to a different commit.
 
 For a later candidate, update all three SDK versions, the exact internal dependency
 requirements, `Cargo.lock`, the changelog and the intended tag together. Run
@@ -49,7 +51,8 @@ Prepare a GitHub **draft prerelease** with title `Reknot v0.1.0-rc.2`, tag
 `v0.1.0-rc.2` and the verified full commit SHA as its target. Include:
 
 - The source SHA and the exact successful CI run URL.
-- The crate and command rename, typed API, bridge and generator highlights.
+- Typed contracts and Restart, the WebSocket quiz, notification/cancellation and
+  source-watch fixes, project generation and the breaking cache changes.
 - Windows/Linux coverage; Rust 1.95 core and Rust 1.97.1 Bevy requirements.
 - The limitations below and links to the changelog and compatibility contract.
 - Source-checkout instructions and the issue reporting destination.
@@ -76,6 +79,16 @@ together against the same SDK and compatible target/toolchain. The typed API
 supports one DLL, Drain and explicit worker Restart. Typed contracts use format v2 and require `JsonSchema`;
 add `#[reknot::schema]` to protocol types and rebuild both host and logic when upgrading from rc.1.
 Handler input/output contract changes require rebuilding/restarting the host; worker state changes use explicit migration.
+
+Handler ABI 5 and task-control ABI 2 retain their bounded prefix reads and optional
+extension headers. This does not promise interoperability between different SDK
+revisions; use the same SDK for host and logic. Request cancellation waits require
+the cancellation ABI 1 extension and fail explicitly if it is absent.
+
+`REKNOT_CACHE_ROOT` is the only cache-root environment variable, and
+`reknot-cache-v1` is the only supported session marker. Earlier aliases are ignored;
+unsupported existing cache files are not migrated or deleted. See
+[retention and cleanup](RETENTION_AND_CLEANUP.md).
 
 Images stay loaded by default, and the default budget is 32 cumulative load
 attempts, including failed native loads. Explicit unsafe reclamation needs the
