@@ -513,10 +513,12 @@ impl Project {
         // Cargo resolves config, environment overrides and path templates.
         // Intermediate artifacts need the same exclusion as final artifacts.
         inputs.exclude_outputs(&output_roots)?;
+        let target = output_roots[0].join("reknot-typed").join(&options.package);
         // Cargo first creates a missing build directory as a randomly named
-        // sibling, outside the excluded subtree. Create the resolved root
-        // before watching/building so this setup cannot look like a source edit.
-        for output in &output_roots {
+        // sibling and renames it. Prepare both metadata roots and the actual
+        // --target-dir before watching so setup neither looks like a source
+        // edit nor races Windows directory observers during that rename.
+        for output in output_roots.iter().chain(std::iter::once(&target)) {
             std::fs::create_dir_all(output).map_err(|e| {
                 Error::Development(format!(
                     "cannot create Cargo output directory {}: {e}",
@@ -527,9 +529,7 @@ impl Project {
         // Creation can reveal the spelling of a previously missing source root
         // (for example src versus SRC on Windows). Recheck before compiling.
         inputs.exclude_outputs(&output_roots)?;
-        let target = normalize(&output_roots[0])
-            .join("reknot-typed")
-            .join(&options.package);
+        let target = normalize(&target);
         Ok(Self {
             manifest,
             package: options.package.clone(),

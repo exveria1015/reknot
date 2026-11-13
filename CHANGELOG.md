@@ -53,6 +53,9 @@ notification-driven hosts and reload lifecycle hardening. Publication is separat
   including configuration and environment overrides, and reject output/source
   overlap. Create validated output roots before watching so Cargo's initial
   directory setup does not trigger an extra reload.
+- Prepare the dedicated `reknot-typed/<package>` target before registering source
+  watches too, avoiding Cargo's initial temporary-directory rename while Windows
+  directory observers are active.
 - Resolve Windows input and output path spelling through the filesystem so
   differently cased Cargo output paths stay excluded, including new directories.
   Recheck source/output overlap after creating the output roots.
