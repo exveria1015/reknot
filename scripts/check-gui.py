@@ -2,12 +2,14 @@
 
 import argparse
 import base64
+from http.client import RemoteDisconnected
 import json
 import os
 from pathlib import Path
 import re
 import socket
 import subprocess
+import sys
 import time
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
@@ -41,11 +43,23 @@ class WebDriver:
             method=method,
             headers={"Content-Type": "application/json"},
         )
-        try:
-            with urlopen(request, timeout=120) as response:
-                value = json.load(response)["value"]
-        except HTTPError as error:
-            raise RuntimeError(error.read().decode(errors="replace")) from error
+        # A disconnect leaves clicks and session mutations ambiguous. Only
+        # reads, including WebDriver's POST element lookup, may be repeated.
+        read_only = method == "GET" or (
+            method == "POST" and re.fullmatch(r"/session/[^/]+/element", path)
+        )
+        for attempt in range(2):
+            try:
+                with urlopen(request, timeout=120) as response:
+                    value = json.load(response)["value"]
+                break
+            except HTTPError as error:
+                raise RuntimeError(error.read().decode(errors="replace")) from error
+            except RemoteDisconnected:
+                if not read_only or attempt:
+                    raise
+                print(f"Retrying WebDriver read after connection closed: {method} {path}",
+                      file=sys.stderr)
         if isinstance(value, dict) and value.get("error"):
             raise RuntimeError(json.dumps(value))
         return value
