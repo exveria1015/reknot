@@ -3,18 +3,52 @@
 import argparse
 import base64
 from datetime import datetime, timezone
-from http.client import HTTPConnection, RemoteDisconnected
+from http.client import HTTPConnection, HTTPException, RemoteDisconnected
 import json
 import os
 from pathlib import Path
 import re
-import socket
 import subprocess
 import sys
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
 ELEMENT = "element-6066-11e4-a52e-4f735466cecf"
+
+
+def wait_for_driver(server, *, port=4444, native_port=4445, seconds=20, diagnostics=None):
+    # The proxy can listen before its native child is accepting connections.
+    # Probe both HTTP endpoints before sending the non-replayable POST /session.
+    deadline = time.monotonic() + seconds
+    last_error = None
+    while time.monotonic() < deadline:
+        if server.poll() is not None:
+            raise RuntimeError("tauri-driver exited; see driver.log")
+        for endpoint in (native_port, port):
+            connection = HTTPConnection("127.0.0.1", endpoint, timeout=1)
+            record = {"time": datetime.now(timezone.utc).isoformat(),
+                      "port": endpoint, "method": "GET", "path": "/status"}
+            try:
+                connection.request("GET", "/status")
+                with connection.getresponse() as response:
+                    record["status"] = response.status
+                    body = response.read()
+                value = json.loads(body).get("value", {})
+                if record["status"] != 200 or not isinstance(value, dict) or value.get("ready") is not True:
+                    raise RuntimeError(f"WebDriver is not ready: {body!r}")
+            except (OSError, HTTPException, ValueError, RuntimeError) as error:
+                last_error = error
+                record["error"] = f"{type(error).__name__}: {error}"
+                break
+            finally:
+                connection.close()
+                if diagnostics is not None:
+                    diagnostics.write(json.dumps(record) + "\n")
+                    diagnostics.flush()
+        else:
+            return
+        time.sleep(0.1)
+    raise TimeoutError(f"WebDriver endpoints did not become ready: {last_error}")
 
 
 class WebDriver:
@@ -157,17 +191,8 @@ def main():
             stderr=subprocess.STDOUT, creationflags=flags,
         )
         try:
-            deadline = time.monotonic() + 20
-            while True:
-                if server.poll() is not None:
-                    raise RuntimeError("tauri-driver exited; see driver.log")
-                try:
-                    with socket.create_connection(("127.0.0.1", 4444), timeout=1):
-                        break
-                except OSError:
-                    if time.monotonic() >= deadline:
-                        raise TimeoutError("tauri-driver did not listen")
-                    time.sleep(0.1)
+            with (output / "startup.jsonl").open("w", encoding="utf-8") as startup:
+                wait_for_driver(server, diagnostics=startup)
             driver = WebDriver(application, read_retries=0 if options.strict_transport else 1,
                                diagnostics=requests)
             driver.wait(lambda: driver.number("#counter") > 0, "initial counter")

@@ -10,6 +10,8 @@ tags and their verification records. A version entry alone does not announce pub
   per-request `Connection: close` through tauri-driver's native connection pool.
   CI repeats the real WebView test three times with read retries disabled and
   retains per-request transport diagnostics.
+- Wait for native-driver and proxy HTTP readiness before creating a GUI test
+  session, including when immediately starting another complete test run.
 - Skip known excluded build-output notifications before Windows path
   canonicalization, avoiding unnecessary opens while Cargo changes its output.
   Add a regression check that the dedicated Cargo target exists before watching.

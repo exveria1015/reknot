@@ -123,7 +123,9 @@ Linux GUI ジョブでは `tauri-driver 2.1.0` と Xvfb で実際の WebView も
 ビルドエラーと修復、同じホストとカウンターの継続を検査します。
 終了時にサンプルのソースを復元し、画面と診断ログを artifact に保存します。
 HTTP/1.1 の接続を維持し、応答を最後まで読んでから次の要求を送ります。
-CI では `--strict-transport` を指定して全シナリオを3回実行し、読み取りも再試行せず、
+セッションを作る前に native driver と proxy の HTTP `/status` が両方 ready を返すまで待ちます。
+proxy のポートが開いただけでは開始せず、起動時の確認は `startup.jsonl` に分けて保存します。
+CI では `--strict-transport` を指定して全シナリオを3回実行し、セッションの読み取りも再試行せず、
 最初の切断で失敗させます。各 `target/gui-smoke/run-*` に、要求時刻・パス・試行番号・
 HTTP ステータスまたはエラーを記録する `requests.jsonl`、`driver.log`、画面、
 成功時の通信回数付き `result.json` を保存します。通常モードの再試行は読み取りの1回だけで、

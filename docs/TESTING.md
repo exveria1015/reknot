@@ -123,9 +123,12 @@ The Linux GUI job also launches a real WebView with `tauri-driver 2.1.0` and Xvf
 A Python test using only the standard library checks example selection and saving, Drain/Restart, request submission,
 build errors and recovery, and continuity of the host and counter.
 It restores sample sources on exit and saves screenshots and diagnostic logs as artifacts.
+Before creating a session, the test waits for both the native driver and proxy
+to report ready via HTTP `/status`; an open proxy port alone is insufficient.
+Startup probes are recorded separately in `startup.jsonl`.
 The client uses a persistent HTTP/1.1 connection and consumes each response before
 the next command. CI runs the full scenario three times with `--strict-transport`,
-so even a read disconnect fails without retrying. Each `target/gui-smoke/run-*`
+so even a session read disconnect fails without retrying. Each `target/gui-smoke/run-*`
 directory contains `requests.jsonl` with request times, paths, attempts, HTTP status
 or errors, plus `driver.log`, screenshots and a successful `result.json` with
 transport counts. Outside strict mode, only a read may retry once; session changes

@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 import socket
 import threading
+from types import SimpleNamespace
 import unittest
 
 SPEC = importlib.util.spec_from_file_location("check_gui", Path(__file__).with_name("check-gui.py"))
@@ -44,6 +45,8 @@ class Peer(BaseHTTPRequestHandler):
             return
         if self.path == "/session":
             value = {"sessionId": "test"}
+        elif self.path == "/status":
+            value = {"ready": True}
         elif self.path.endswith("/element"):
             value = {GUI.ELEMENT: "id"}
         else:
@@ -183,6 +186,33 @@ class Transport(unittest.TestCase):
         self.assertNotIn("error", recovered)
         self.assertIn("time", failed)
         self.assertGreaterEqual(failed["elapsed_ms"], 0)
+
+    def test_startup_waits_for_native_readiness_before_session_creation(self):
+        self.server.outcomes.append({"value": {"ready": False}})
+        diagnostics = io.StringIO()
+        GUI.wait_for_driver(SimpleNamespace(poll=lambda: None),
+                            port=self.server.server_port, native_port=self.server.server_port,
+                            seconds=2, diagnostics=diagnostics)
+        self.assertEqual([r["method"] for r in self.server.requests], ["GET"] * 3)
+        self.assertTrue(all(r["path"] == "/status" for r in self.server.requests))
+        records = [json.loads(line) for line in diagnostics.getvalue().splitlines()]
+        self.assertIn("error", records[0])
+        self.assertNotIn("error", records[-1])
+
+    def test_listening_proxy_does_not_mean_native_driver_is_ready(self):
+        with socket.socket() as unavailable:
+            unavailable.bind(("127.0.0.1", 0))
+            with self.assertRaises(TimeoutError):
+                GUI.wait_for_driver(SimpleNamespace(poll=lambda: None),
+                                    port=self.server.server_port,
+                                    native_port=unavailable.getsockname()[1], seconds=0.1)
+        self.assertEqual(self.server.requests, [])
+
+    def test_startup_reports_exited_driver_without_sending_requests(self):
+        with self.assertRaisesRegex(RuntimeError, "tauri-driver exited"):
+            GUI.wait_for_driver(SimpleNamespace(poll=lambda: 1),
+                                port=self.server.server_port, native_port=self.server.server_port)
+        self.assertEqual(self.server.requests, [])
 
 
 if __name__ == "__main__":
