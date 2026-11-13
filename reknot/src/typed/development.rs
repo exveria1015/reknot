@@ -311,6 +311,39 @@ struct Inputs {
     excluded: HashSet<PathBuf>,
 }
 impl Inputs {
+    fn exclude_outputs(&mut self, outputs: &[PathBuf]) -> Result<(), Error> {
+        self.excluded.extend(outputs.iter().cloned());
+        // Resolve inputs and outputs together: either side can use a different
+        // spelling from the filesystem, including a previously absent root.
+        for paths in [
+            &mut self.files,
+            &mut self.directories,
+            &mut self.rust_directories,
+            &mut self.excluded,
+        ] {
+            *paths = std::mem::take(paths)
+                .into_iter()
+                .map(|path| normalize(&path))
+                .collect();
+        }
+        if outputs.iter().map(|path| normalize(path)).any(|output| {
+            self.directories
+                .iter()
+                .any(|dir| output.starts_with(dir) || dir.starts_with(&output))
+                || self
+                    .rust_directories
+                    .iter()
+                    .any(|dir| dir.starts_with(&output))
+        }) || self
+            .files
+            .iter()
+            .any(|file| self.excluded.iter().any(|dir| file.starts_with(dir)))
+        {
+            return Err(Error::Configuration("Cargo output directory overlaps source inputs; move build output outside source directories".into()));
+        }
+        Ok(())
+    }
+
     fn excludes(&self, path: &Path) -> bool {
         self.excluded.iter().any(|dir| path.starts_with(dir))
             || path.components().any(|part| part.as_os_str() == ".git")
@@ -347,6 +380,8 @@ struct Metadata {
     packages: Vec<Package>,
     workspace_root: PathBuf,
     target_directory: PathBuf,
+    // Older Cargo metadata may omit the separate intermediate output path.
+    build_directory: Option<PathBuf>,
     resolve: Option<Resolve>,
 }
 #[derive(Deserialize)]
@@ -466,24 +501,35 @@ impl Project {
                 inputs.files.insert(source);
             }
         }
-        let target_root = normalize(&metadata.target_directory);
-        inputs.excluded.insert(target_root.clone());
-        let target = target_root.join("reknot-typed").join(&options.package);
-        if inputs
-            .directories
-            .iter()
-            .any(|dir| target_root.starts_with(dir) || dir.starts_with(&target_root))
-            || inputs
-                .rust_directories
-                .iter()
-                .any(|dir| dir.starts_with(&target_root))
-            || inputs
-                .files
-                .iter()
-                .any(|file| inputs.excluded.iter().any(|dir| file.starts_with(dir)))
-        {
-            return Err(Error::Configuration("Cargo target directory overlaps source inputs; move build output outside source directories".into()));
+        let output_roots = [
+            normalize(&metadata.target_directory),
+            normalize(
+                metadata
+                    .build_directory
+                    .as_deref()
+                    .unwrap_or(&metadata.target_directory),
+            ),
+        ];
+        // Cargo resolves config, environment overrides and path templates.
+        // Intermediate artifacts need the same exclusion as final artifacts.
+        inputs.exclude_outputs(&output_roots)?;
+        // Cargo first creates a missing build directory as a randomly named
+        // sibling, outside the excluded subtree. Create the resolved root
+        // before watching/building so this setup cannot look like a source edit.
+        for output in &output_roots {
+            std::fs::create_dir_all(output).map_err(|e| {
+                Error::Development(format!(
+                    "cannot create Cargo output directory {}: {e}",
+                    output.display()
+                ))
+            })?;
         }
+        // Creation can reveal the spelling of a previously missing source root
+        // (for example src versus SRC on Windows). Recheck before compiling.
+        inputs.exclude_outputs(&output_roots)?;
+        let target = normalize(&output_roots[0])
+            .join("reknot-typed")
+            .join(&options.package);
         Ok(Self {
             manifest,
             package: options.package.clone(),
@@ -508,25 +554,24 @@ impl Project {
                             EventKind::Modify(_) | EventKind::Create(_) | EventKind::Remove(_)
                         ) =>
                     {
-                        let topology_changed = matches!(
-                            event.kind,
-                            EventKind::Create(_)
-                                | EventKind::Remove(_)
-                                | EventKind::Modify(notify::event::ModifyKind::Name(_))
-                        ) && event
-                            .paths
-                            .iter()
-                            .any(|path| inputs.needs_watch_refresh(&normalize(path)));
+                        let paths: Vec<_> =
+                            event.paths.iter().map(|path| normalize(path)).collect();
+                        let topology_changed =
+                            matches!(
+                                event.kind,
+                                EventKind::Create(_)
+                                    | EventKind::Remove(_)
+                                    | EventKind::Modify(notify::event::ModifyKind::Name(_))
+                            ) && paths.iter().any(|path| inputs.needs_watch_refresh(path));
                         if topology_changed {
                             watch_refresh.store(true, Ordering::Release);
                         }
                         if topology_changed
-                            || event.paths.iter().any(|path| {
-                                let path = normalize(path);
+                            || paths.iter().any(|path| {
                                 // Windows also reports a parent's last-write
                                 // change for edits under an excluded directory.
                                 // Directory metadata alone is not a source edit.
-                                inputs.contains(&path)
+                                inputs.contains(path)
                                     && !(matches!(event.kind, EventKind::Modify(kind)
                                         if !matches!(kind, notify::event::ModifyKind::Name(_)))
                                         && path.is_dir())
@@ -619,24 +664,61 @@ fn append_diagnostic(output: &mut String, input: &str) {
     }
     output.push_str(&input[..end]);
 }
+#[cfg(not(windows))]
 fn normalize(path: &Path) -> PathBuf {
-    // Windows Cargo metadata and notify may disagree on the extended-path prefix.
-    #[cfg(windows)]
-    {
-        let path = path.to_string_lossy();
-        if let Some(rest) = path.strip_prefix("\\\\?\\UNC\\") {
-            return PathBuf::from(format!("\\\\{rest}"));
-        }
-        if let Some(rest) = path.strip_prefix("\\\\?\\") {
-            return PathBuf::from(rest);
+    path.to_path_buf()
+}
+
+#[cfg(windows)]
+fn normalize(path: &Path) -> PathBuf {
+    use std::path::{Component, Prefix};
+    // Match Cargo and notify using filesystem spelling, without assuming every
+    // Windows directory is case-insensitive. Missing/removed paths still need
+    // filtering, so resolve the longest existing ancestor and keep the suffix.
+    let path = path
+        .ancestors()
+        .find_map(|ancestor| {
+            ancestor.canonicalize().ok().map(|mut resolved| {
+                resolved.extend(path.strip_prefix(ancestor).unwrap().components());
+                resolved
+            })
+        })
+        .unwrap_or_else(|| path.to_path_buf());
+    // Cargo needs ordinary drive/UNC paths. Keep OsStr components intact rather
+    // than round-tripping filenames through a lossy Unicode conversion.
+    let mut components = path.components();
+    if let Some(Component::Prefix(prefix)) = components.next() {
+        let root = match prefix.kind() {
+            Prefix::VerbatimDisk(drive) => Some(PathBuf::from(format!("{}:", char::from(drive)))),
+            Prefix::VerbatimUNC(server, share) => {
+                let mut root = std::ffi::OsString::from(r"\\");
+                root.push(server);
+                root.push(r"\");
+                root.push(share);
+                Some(PathBuf::from(root))
+            }
+            _ => None,
+        };
+        if let Some(mut root) = root {
+            root.extend(components);
+            return root;
         }
     }
-    path.to_path_buf()
+    path
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn legacy_metadata_without_separate_build_directory_is_accepted() {
+        let metadata: Metadata = serde_json::from_str(
+            r#"{"packages":[],"workspace_root":"project","target_directory":"project/target","resolve":null}"#,
+        )
+        .unwrap();
+        assert!(metadata.build_directory.is_none());
+    }
+
     #[test]
     fn watch_refresh_tracks_roots_and_ancestors_without_including_output() {
         let root = PathBuf::from("project");

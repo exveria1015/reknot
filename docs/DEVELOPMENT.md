@@ -39,7 +39,9 @@ Cargo's dependency graph identifies inputs for the logic and its local dependenc
 Cargo metadata and builds run from the selected manifest's directory, so they use
 the same project configuration even when the host starts elsewhere.
 Custom target directories such as `implementation/lib.rs` and crate-root `lib.rs` are supported.
-Build inputs exclude local `target/` directories, the configured Cargo output directory and `.git`.
+Build inputs exclude local `target/` directories, Cargo's final and intermediate output directories and `.git`.
+The intermediate directory follows `build.build-dir` / `CARGO_BUILD_BUILD_DIR` as resolved by Cargo metadata.
+On Windows, existing filesystem ancestors resolve path spelling differences between configuration and watch notifications, including output directories that do not exist yet.
 Sources inside these output directories are rejected. Avoid writing generated files under source directories in custom build scripts too.
 
 After changing an include file or generated input outside the watch set, also save a watched source file or restart the host.

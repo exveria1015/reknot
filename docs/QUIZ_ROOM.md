@@ -76,10 +76,12 @@ log. In Drain, different scoring/clock generations are expected.
 
 The Axum host runs a multithreaded Tokio runtime. A `LocalSet` keeps `DevModule`,
 native tasks and cleanup on one owner thread. Axum's `Send` WebSocket tasks use
-`HandlerClient` endpoints from `DevModule::bridge`; `update()` drives them every
-10 ms, including during ordinary traffic. No room mutex is held across a logic
-await. The registered clock awaits bounded host sleep services, checkpoints its
-count and publishes copied pulses. The host owns sockets, players, questions,
+`HandlerClient` endpoints from `DevModule::bridge`. The bridge driver is polled
+from executor notifications, so requests do not wait for the maintenance timer.
+The separate 10 ms `update()` timer handles source/build maintenance and reload
+progress. No room mutex is held across a logic await. The registered clock awaits
+bounded host sleep services, checkpoints its count and publishes copied pulses.
+The host owns sockets, players, questions,
 deadline validation, answer reservations and score commits.
 
 The Fastify host registers the official WebSocket plugin before its routes and

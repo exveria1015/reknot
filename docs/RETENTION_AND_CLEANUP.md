@@ -78,7 +78,7 @@ Counts and bytes describe the selected copy files. They do not guarantee an equi
 CLI exit codes are 0 for a complete scan or operation, 1 for argument, root, lock or similar errors, and 2 for partial results or failures.
 Normally skipped InUse or Legacy entries are not errors.
 
-## Migrating from flow-reloader
+## Cache compatibility across the rename
 
 The default cache root is now `<temp>/reknot/`. Existing files under
 `<temp>/flow-reloader/` are not moved or deleted automatically. Inspect that
@@ -86,9 +86,20 @@ directory explicitly with `reknot-cache inspect --root <old-absolute-root>`.
 If you choose to clean it, use the same root with `clean --apply`; only eligible
 managed sessions are removed, under the same lease and permission checks.
 
-The stored `managed-v1` format, including its original marker, is unchanged.
-`FLOW_RELOAD_CACHE_ROOT` remains a fallback alias when `REKNOT_CACHE_ROOT` is not
-set. If both are set, `REKNOT_CACHE_ROOT` takes precedence.
+The old names below are retained intentionally for compatibility with existing
+configuration and files; new applications should use the Reknot names.
+
+| Identifier | Contract |
+| --- | --- |
+| `REKNOT_CACHE_ROOT` | Preferred environment variable; takes precedence whenever set |
+| `FLOW_RELOAD_CACHE_ROOT` | Fallback only when `REKNOT_CACHE_ROOT` is unset |
+| `flow-reloader-cache-v1` | Persisted marker for the unchanged `managed-v1` format, used for both existing and new sessions |
+
+The persisted marker identifies the disk format, not the current SDK name or
+version. Renaming it would require a separate format migration. An unrecognized
+marker remains `Unknown` and is not deleted by `clean --apply`; old PID-only
+entries remain `Legacy` and are also preserved. Neither environment-variable
+compatibility nor the rename changes the lease and permission checks.
 
 ## Sessions and exclusive access
 

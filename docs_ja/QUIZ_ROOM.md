@@ -75,8 +75,10 @@ node examples/quiz_room/js/server.mjs
 
 AxumホストはマルチスレッドのTokioランタイムを使います。`LocalSet` により、
 `DevModule`・ネイティブタスク・終了処理を1つの所有スレッドに置きます。
-Axumの `Send` なWebSocketタスクは `DevModule::bridge` の `HandlerClient` を使い、
-10msごとの `update()` が通常の通信中も処理を進めます。ロジックをawaitする間、部屋のMutexは保持しません。
+Axumの `Send` なWebSocketタスクは `DevModule::bridge` の `HandlerClient` を使います。
+ブリッジのドライバーは実行器の通知でpollされるため、要求の処理は保守タイマーを待ちません。
+別の10ms周期で呼ぶ `update()` はソース・ビルドの監視と更新処理を進めます。
+ロジックをawaitする間、部屋のMutexは保持しません。
 登録した時計は上限付きのホストsleepサービスを待ち、カウントを保存してコピーした通知を送ります。
 ソケット・プレイヤー・問題・期限検査・回答予約・得点の確定はホストが担当します。
 

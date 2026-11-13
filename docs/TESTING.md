@@ -39,6 +39,9 @@ These tests do not prove semantic compatibility, framework-specific SDK connecti
 The `native_watch_` tests create `.cargo` after startup, replace it with invalid configuration and recover by saving.
 They also remove, recreate and move a source directory, then verify that later edits still reload.
 Generated output and unrelated configuration-directory files must not trigger builds.
+Separate intermediate outputs configured through Cargo files or environment variables are also excluded,
+while ordinary source edits still reload. Output/source overlap is rejected before compiling.
+Windows cases vary the spelling of both existing and not-yet-created output paths and check source-overlap rejection after resolving those paths.
 Package checks repeat these tests from extracted archives.
 
 ## What each test covers

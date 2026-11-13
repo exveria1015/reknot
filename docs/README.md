@@ -4,7 +4,7 @@ English | [日本語](../docs_ja/README.md) · [Documentation index](INDEX.md)
 
 **Edit and try Rust logic while your application keeps running.**
 
-Reknot (formerly flow-reloader) is a hot-reload SDK for local development.
+Reknot is a hot-reload SDK for local development.
 Keep connections, UI and state in the host, and put the code you want to change in a separate logic crate.
 Save an edit to the logic; once the build and contract checks succeed, new work uses the updated code.
 

@@ -6,14 +6,24 @@ tags and their verification records. A version entry alone does not announce pub
 
 ## Unreleased
 
+### Examples and host driving
+
+- Playable WebSocket quiz comparison: Axum + Reknot and Fastify + JavaScript share
+  questions/UI, with host-owned connections and scores, editable scoring rules,
+  registered clock checkpoints, Drain/Restart and failure recovery. Includes a
+  two-server launcher, Japanese/English guides and Windows/Linux process tests.
+- Drive generated-host and quiz bridge requests directly from executor wakes;
+  source/build maintenance keeps its separate cadence. Console hosts accept quit
+  and EOF during a request and wait for registered cancellation cleanup.
+
+### Cancellation and notification safety
+
 - Wake parked typed calls on explicit cancellation, so selective Future
   combinators finish cleanup and unblock Restart. Repeated cancellation is idle.
 - Schedule another bounded cleanup pass for requests dropped during cleanup,
   preserving queued work if the scheduling Waker panics or reenters cleanup.
 - Contain the final executor Waker destructor panic when a host notification
   races with request completion, including a simultaneous notification panic.
-- Rearm the low-level `SourceWatcher` after source/project directory recreation;
-  also observe replacement of manifest/build scripts and newly created inputs.
 - Notify each `RequestContext::cancelled()` and `ChildStop::cancelled()` wait
   independently, including inside selective Future combinators. Stop and Restart
   no longer stall on these composed waits. Dropped waits release their Wakers.
@@ -26,22 +36,37 @@ tags and their verification records. A version entry alone does not announce pub
   asynchronous service, so notification-driven requests do not stall.
 - Notify every `CancellationToken::cancelled()` waiter independently, release
   dropped registrations, and synchronize registration with concurrent cancellation.
-- Drive generated-host and quiz bridge requests directly from executor wakes;
-  source/build maintenance keeps its separate cadence. Console hosts accept quit
-  and EOF during a request and wait for registered cancellation cleanup.
+- Preserve other bridge result/shutdown notifications when one Waker panics.
+  A service worker unwinding from a result notification closes admission, fails
+  queued work and notifies join instead of leaving clients waiting indefinitely.
+
+### Source watching and package verification
+
+- Exclude Cargo's separate intermediate build directory from source watches,
+  including configuration and environment overrides, and reject output/source
+  overlap. Create validated output roots before watching so Cargo's initial
+  directory setup does not trigger an extra reload.
+- Resolve Windows input and output path spelling through the filesystem so
+  differently cased Cargo output paths stay excluded, including new directories.
+  Recheck source/output overlap after creating the output roots.
+- Shorten package-verification and watch-fixture paths so nested Cargo builds
+  fit Windows linker path limits with newer Cargo artifact layouts.
+- Rearm the low-level `SourceWatcher` after source/project directory recreation;
+  also observe replacement of manifest/build scripts and newly created inputs.
 - Watch Rust modules beside custom Cargo targets, excluding build output, and
   run metadata/build commands from the selected manifest's directory so local
   Cargo configuration applies consistently.
 - Refresh source watches when input directories are created, removed or replaced.
   New `.cargo` directories and recreated source directories keep triggering
   reloads, including recovery after metadata or build failures.
-- Preserve other bridge result/shutdown notifications when one Waker panics.
-  A service worker unwinding from a result notification closes admission, fails
-  queued work and notifies join instead of leaving clients waiting indefinitely.
-- Playable WebSocket quiz comparison: Axum + Reknot and Fastify + JavaScript share
-  questions/UI, with host-owned connections and scores, editable scoring rules,
-  registered clock checkpoints, Drain/Restart and failure recovery. Includes a
-  two-server launcher, Japanese/English guides and Windows/Linux process tests.
+
+### Naming and compatibility
+
+- Use Reknot in the introductory documentation. Retain the former name in
+  migration/history notes and compatibility identifiers: `FLOW_RELOAD_CACHE_ROOT`
+  is used only when `REKNOT_CACHE_ROOT` is unset, and `flow-reloader-cache-v1`
+  remains the persisted marker for existing and new `managed-v1` sessions.
+  Unknown formats and PID-only legacy entries remain excluded from deletion.
 
 ## 0.1.0-rc.2
 

@@ -29,7 +29,9 @@ try {
         '--allow-dirty', '--no-verify', '--locked'
     ) + $taskResolution)
 
-    $taskStage = Join-Path $taskMetadata.target_directory ('package-checks/' + [guid]::NewGuid().ToString('N'))
+    # Nested fixture builds must leave room for Cargo's intermediate paths and
+    # MSVC's path limit. New-Item refuses an existing directory; never reuse one.
+    $taskStage = Join-Path $taskMetadata.target_directory ('package-checks/' + [guid]::NewGuid().ToString('N').Substring(0, 8))
     New-Item -ItemType Directory -Path $taskStage | Out-Null
     $taskMembers = @()
     $taskPatches = @()
@@ -168,7 +170,7 @@ fn main() {
     @{
         archives = $taskArchives
         extracted_workspace = $taskStage
-        checks = @('all-targets/all-features', 'all-targets/no-default-features', 'standalone ABI DLL', 'explicit native reclamation', 'managed generation cleanup', 'composed cancellation, legacy ABI rejection and native reclamation', 'nested cleanup notification and host Waker destructor panic', 'low-level and typed watch registration after directory replacement', 'typed handlers/services/bridge/contracts/restart/cancellation', 'generated static and native project', 'generated notification-driven console and cancellation', 'static consumer')
+        checks = @('all-targets/all-features', 'all-targets/no-default-features', 'standalone ABI DLL', 'explicit native reclamation', 'managed generation cleanup', 'composed cancellation, legacy ABI rejection and native reclamation', 'nested cleanup notification and host Waker destructor panic', 'low-level and typed watch registration after directory replacement', 'separate intermediate output exclusion and source-overlap rejection', 'typed handlers/services/bridge/contracts/restart/cancellation', 'generated static and native project', 'generated notification-driven console and cancellation', 'static consumer')
     } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $taskStage 'result.json') -Encoding utf8
     Write-Host "Verified extracted SDK packages and consumer: $taskStage"
 } finally {

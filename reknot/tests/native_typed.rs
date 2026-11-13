@@ -48,15 +48,19 @@ fn wait(dev: &mut DevModule, accept: impl Fn(&ReloadEvent) -> bool) -> ReloadEve
     }
 }
 
-fn watch_fixture(label: &str, source: &str) -> (PathBuf, DevModule) {
+fn watch_directory(label: &str) -> PathBuf {
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let project = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!(
-        "typed-watch-{label}-{}-{nonce:x}",
-        std::process::id()
-    ));
+    let project = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("tw-{label}-{:x}-{nonce:x}", std::process::id()));
+    std::fs::create_dir_all(&project).unwrap();
+    project
+}
+
+fn watch_fixture(label: &str, source: &str) -> (PathBuf, DevModule) {
+    let project = watch_directory(label);
     std::fs::create_dir_all(project.join("src")).unwrap();
     let sdk = env!("CARGO_MANIFEST_DIR").replace('\\', "/");
     std::fs::write(
@@ -85,6 +89,210 @@ fn watch_fixture(label: &str, source: &str) -> (PathBuf, DevModule) {
     options.debounce = Duration::from_millis(30);
     let dev = unsafe { DevModule::start(module().builder(), options) }.unwrap();
     (project, dev)
+}
+
+fn watch_subprocess(name: &str, project: &std::path::Path, output: Option<&std::path::Path>) {
+    // Scope Cargo overrides to a fresh process, before any watcher threads start.
+    let mut child = Command::new(std::env::current_exe().unwrap());
+    child
+        .args([name, "--exact", "--ignored", "--test-threads=1"])
+        .env("REKNOT_TEST_WATCH_PROJECT", project)
+        .env_remove("CARGO_BUILD_BUILD_DIR")
+        .env_remove("CARGO_TARGET_DIR");
+    if let Some(output) = output {
+        child.env("CARGO_BUILD_BUILD_DIR", output);
+    }
+    let result = child.output().unwrap();
+    assert!(
+        result.status.success(),
+        "{name} in {}\n{}\n{}",
+        project.display(),
+        String::from_utf8_lossy(&result.stdout),
+        String::from_utf8_lossy(&result.stderr)
+    );
+}
+
+fn output_fixture() -> PathBuf {
+    let project = watch_directory("out");
+    std::fs::create_dir(project.join(".cargo")).unwrap();
+    let sdk = env!("CARGO_MANIFEST_DIR").replace('\\', "/");
+    std::fs::write(
+        project.join("Cargo.toml"),
+        format!(
+            "[package]\nname = \"watch_output\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\
+             [lib]\npath = \"lib.rs\"\ncrate-type = [\"cdylib\"]\n\
+             [dependencies]\nreknot = {{ path = {}, default-features = false, features = [\"typed\"] }}\n\
+             [workspace]\n",
+            serde_json::to_string(&sdk).unwrap()
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        project.join("lib.rs"),
+        include_str!("fixtures/typed_logic.rs").replace("typed_helper::label()", "\"initial\""),
+    )
+    .unwrap();
+    let output = Command::new("cargo")
+        .current_dir(&project)
+        .args(["generate-lockfile", "--offline"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    project
+}
+
+fn assert_watch_idle(dev: &mut DevModule) {
+    let generation = dev.host().generation();
+    let until = Instant::now() + Duration::from_millis(900);
+    while Instant::now() < until {
+        let event = dev.update();
+        assert!(
+            event.is_none(),
+            "build output retriggered a reload: {event:?}"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(dev.host().generation(), generation);
+}
+
+#[test]
+#[ignore = "builds native DLLs with Cargo configuration and environment overrides"]
+fn native_watch_intermediate_output_is_excluded_from_reloads() {
+    let Some(project) = std::env::var_os("REKNOT_TEST_WATCH_PROJECT") else {
+        for use_environment in [false, true] {
+            let project = output_fixture();
+            std::fs::write(
+                project.join(".cargo/config.toml"),
+                "[build]\nbuild-dir = \"intermediate\"\n",
+            )
+            .unwrap();
+            let output = project.join("env-output");
+            watch_subprocess(
+                "native_watch_intermediate_output_is_excluded_from_reloads",
+                &project,
+                use_environment.then_some(output.as_path()),
+            );
+        }
+        return;
+    };
+    let project = PathBuf::from(project);
+    let output = std::env::var_os("CARGO_BUILD_BUILD_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| project.join("intermediate"));
+    let mut options = DevOptions::new(project.join("Cargo.toml"), "watch_output");
+    options.debounce = Duration::from_millis(30);
+    let mut dev = unsafe { DevModule::start(module().builder(), options) }.unwrap();
+    assert!(
+        output.join("debug").is_dir(),
+        "Cargo did not use the configured build directory"
+    );
+    assert_watch_idle(&mut dev);
+    // New directories and generated Rust files must both stay outside the
+    // watch set, even beside a crate-root lib.rs.
+    let generated = output.join("generated/nested/output.rs");
+    std::fs::create_dir_all(generated.parent().unwrap()).unwrap();
+    std::fs::write(&generated, "generated output").unwrap();
+    assert_watch_idle(&mut dev);
+    let echo = dev.host().handler(ECHO).unwrap();
+    assert_eq!(ready(echo.call("x".into())).unwrap(), "initial:x");
+    std::fs::write(
+        project.join("lib.rs"),
+        include_str!("fixtures/typed_logic.rs").replace("typed_helper::label()", "\"edited\""),
+    )
+    .unwrap();
+    wait(&mut dev, |event| {
+        matches!(event, ReloadEvent::Reloaded { .. })
+    });
+    assert_eq!(ready(echo.call("x".into())).unwrap(), "edited:x");
+    std::fs::write(&generated, "new generated output").unwrap();
+    assert_watch_idle(&mut dev);
+    std::fs::remove_file(&generated).unwrap();
+    std::fs::remove_dir(generated.parent().unwrap()).unwrap();
+    assert_watch_idle(&mut dev);
+}
+
+#[test]
+#[ignore = "runs Cargo metadata with invalid build directory configurations"]
+fn native_watch_build_output_cannot_overlap_sources() {
+    let Some(project) = std::env::var_os("REKNOT_TEST_WATCH_PROJECT") else {
+        watch_subprocess(
+            "native_watch_build_output_cannot_overlap_sources",
+            &output_fixture(),
+            None,
+        );
+        return;
+    };
+    let project = PathBuf::from(project);
+    let outputs = vec![PathBuf::from("."), PathBuf::from("src/generated")];
+    #[cfg(windows)]
+    let outputs = {
+        let mut outputs = outputs;
+        for output in [&project, &project.join("src/generated")] {
+            outputs.push(PathBuf::from(output.to_string_lossy().to_ascii_lowercase()));
+        }
+        // This source root does not exist yet. Its spelling becomes known only
+        // when the output path is created on a case-insensitive filesystem.
+        outputs.push(project.join("SRC/generated"));
+        outputs
+    };
+    for output in outputs {
+        std::fs::write(
+            project.join(".cargo/config.toml"),
+            format!(
+                "[build]\nbuild-dir = {}\n",
+                serde_json::to_string(&output.to_string_lossy()).unwrap()
+            ),
+        )
+        .unwrap();
+        let result = unsafe {
+            DevModule::start(
+                module().builder(),
+                DevOptions::new(project.join("Cargo.toml"), "watch_output"),
+            )
+        };
+        assert!(
+            matches!(result, Err(Error::Configuration(ref message)) if message.contains("overlaps source inputs")),
+            "output/source overlap was accepted: {}",
+            output.display()
+        );
+    }
+}
+
+#[cfg(windows)]
+#[test]
+#[ignore = "builds native DLLs with Windows output-path spelling differences"]
+fn native_watch_windows_output_spelling_is_excluded() {
+    for exists in [false, true] {
+        let project = output_fixture();
+        let output = project.join("Build/InterMed");
+        let target = project.join("Final/Artifacts");
+        for path in [&output, &target] {
+            std::fs::create_dir_all(if exists { path } else { path.parent().unwrap() }).unwrap();
+        }
+        // Vary existing ancestors and, in the second case, the output root.
+        let output = PathBuf::from(output.to_string_lossy().to_ascii_lowercase());
+        let target = target.to_string_lossy().to_ascii_lowercase();
+        std::fs::write(
+            project.join(".cargo/config.toml"),
+            format!(
+                "[build]\ntarget-dir = {}\n",
+                serde_json::to_string(&target).unwrap()
+            ),
+        )
+        .unwrap();
+        watch_subprocess(
+            "native_watch_intermediate_output_is_excluded_from_reloads",
+            &project,
+            Some(&output),
+        );
+        assert!(project
+            .join("Final/Artifacts/reknot-typed/watch_output/debug")
+            .is_dir());
+    }
 }
 
 #[test]
