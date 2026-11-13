@@ -5,10 +5,10 @@ English | [日本語](../docs_ja/TESTING.md)
 ## Typed handlers
 
 ```sh
-cargo test -p reknot --no-default-features --features typed --test typed_handlers --test typed_services --test typed_bridge --test typed_contracts --test typed_restart --locked
+cargo test -p reknot --no-default-features --features typed --test typed_handlers --test typed_services --test typed_bridge --test typed_contracts --test typed_restart --test typed_cancellation --locked
 cargo test -p reknot --test native_typed --locked -- --ignored --test-threads=1
 cargo test -p reknot --test scaffold --locked -- --include-ignored
-cargo test -p typed_bot_host --no-default-features --features static-logic --locked
+cargo test -p typed_bot_host --no-default-features --features static-logic --locked -- --include-ignored
 cargo run -p typed_bot_host --example framework_bridge --no-default-features --features static-logic --locked
 ```
 
@@ -17,11 +17,16 @@ panic reporting, children and cancellation cleanup. Compile-fail doctests cover 
 Real-DLL tests use isolated projects to check edits to local dependencies, coexistence of old requests and new code, recovery by saving after build failure,
 contract-change rejection, discarding stale candidates after further edits, adding and watching local dependencies, and avoiding watch loops triggered by build output.
 They also cancel a request submitted from another thread to the old generation after cutover, and wait for its registered native children to finish.
+Custom-target tests edit sibling/nested modules and local dependencies, reload Cargo configuration from an unrelated host cwd,
+and verify that generated Rust output does not retrigger builds.
 Bridge tests cover real threads, FIFO admission, capacity including uncollected replies, cancellation while queued or running,
 multiple shutdown waiters, owner destruction and continued operation after a result-notification Waker panics.
 Generator tests check rejection of existing directories and invalid input. The ignored test builds and runs generated projects
 in static and native configurations, then saves edits while running to check cutover and preservation of the host's message count.
 Package checks repeat the same generation and execution test from extracted archives.
+Generated-console tests hold maintenance for an hour and verify immediate-wake requests still finish.
+Both generated and example console hosts test quit and EOF independently during a pending request, including child cleanup;
+ordinary input while busy is explicitly rejected. Bridge/worker tests verify all other replies and shutdown notifications survive a Waker panic.
 The 1 MiB boundaries are checked in ordinary runs; Miri uses small inputs to check ownership and FFI paths.
 The Miri script includes `typed-handlers`, `typed-services` and `typed-bridge` under both borrow models.
 Contract tests check both Serde directions, field changes under unchanged type names/versions, source locations and bounded diagnostics.
@@ -31,10 +36,24 @@ then generates a Git-dependent application that exports its schema and runs in n
 Miri includes `abi-metadata`, `typed-contracts` and `typed-restart`, including reading an actual shorter ABI 5 table.
 These tests do not prove semantic compatibility, framework-specific SDK connections, automatic DLL reclamation or guaranteed OS notification delivery.
 
+The `native_watch_` tests create `.cargo` after startup, replace it with invalid configuration and recover by saving.
+They also remove, recreate and move a source directory, then verify that later edits still reload.
+Generated output and unrelated configuration-directory files must not trigger builds.
+Separate intermediate outputs configured through Cargo files or environment variables are also excluded,
+while ordinary source edits still reload. Output/source overlap is rejected before compiling.
+Windows cases vary the spelling of both existing and not-yet-created output paths and check source-overlap rejection after resolving those paths.
+Package checks repeat these tests from extracted archives.
+
 ## What each test covers
 
 | Target | Coverage |
 | --- | --- |
+| `typed_cancellation` | Explicit cancellation of parked calls, Restart progress, latest Waker, repeated cancellation without self-wake, delayed child cleanup |
+| `cleanup_notifications` | Requests dropped during cleanup get another bounded pass; idle waits, scheduling panic and reentrant notification |
+| `notification_unwind` | Concurrent completion and host notification; final executor Waker Drop panic, alone or with wake panic; subprocess isolation natively, direct execution in both Miri models |
+| `source_watcher` | Low-level watch recovery after source/project recreation, initially missing source, manifest/build script replacement, output/log/git filtering |
+| `activity_notifications` | Nested child/service registration completes using wakes only, bounded poll passes, no idle self-wake, ownership after a scheduling wake panics |
+| `async_service::tests` | Independent cancellation waiters, Waker replacement/release, dropped/reused registrations, cross-thread registration/cancel/drop races, notification panic and reentry |
 | `host_resources` | Ownership, revocation, resource IDs/versions, borrow conflicts, output capacity and panic boundaries |
 | `cache_lifecycle` | Separate host/CLI processes, image states, leases after Router Drop, normal/forced exit, non-inheritance, namespace contention, trash retry and exclusion of unknown/legacy/link entries |
 | `request_routing` | Input copying, Drain, candidate rejection, pause/resume and execution outliving its Router |
@@ -140,6 +159,18 @@ Alongside common exit, locking and cleanup checks, Windows tests cover deletion 
 These OS and file checks are outside Miri's scope. See the [usage contract](RETENTION_AND_CLEANUP.md).
 
 ## Miri
+
+`typed_cancellation`, `cleanup_notifications` and `notification_unwind` run under
+both borrow models. Package checks run these suites and the native `source_watcher`
+tests from extracted SDK archives as well.
+
+`cancellation_notifications` checks wake-driven stop/Restart through
+`FuturesUnordered`, multiple/cloned waiters, dropped/replaced registrations,
+root completion/Drop and child failure. `native_cancellation` repeats the
+cross-DLL cases and checks that both images can be reclaimed afterwards.
+`generation_locals` also checks absent and unknown cancellation tails without
+reading their function-pointer payloads. Package checks run all three suites;
+Miri runs the static suites under both borrow models.
 
 Use a pinned toolchain and Linux interpreter target. This does not change the default toolchain for ordinary builds.
 

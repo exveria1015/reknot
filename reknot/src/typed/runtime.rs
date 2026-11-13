@@ -327,6 +327,8 @@ impl<O> Call<O> {
     }
     /// Destroy the root on its owner thread; keep awaiting this call until its
     /// registered cleanup finishes. Dropping it instead needs `poll_cleanup`.
+    /// The first cancellation wakes the last registered task Waker; repeated
+    /// cancellation does not keep scheduling a call waiting for child cleanup.
     pub fn cancel(&mut self) {
         self.raw.cancel();
     }
@@ -356,8 +358,11 @@ impl RawCall {
     }
     pub(super) fn cancel(&mut self) {
         if let Some(Ok(active)) = &mut self.admission {
-            active.cancelled = true;
-            active.task.as_mut().unwrap().cancel_and_join();
+            // Drivers may observe cancellation on every poll while cleanup is
+            // pending. Only the first transition needs to notify the executor.
+            if !std::mem::replace(&mut active.cancelled, true) {
+                active.task.as_mut().unwrap().cancel_and_join();
+            }
         }
     }
 }

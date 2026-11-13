@@ -17,7 +17,9 @@ After startup, it calls `DevModule::update()` regularly to drive this sequence:
 The current generation can accept work during a build. Already admitted requests finish on their selected generation.
 If more edit notifications arrive, the controller discards the superseded build result and rebuilds.
 
-`update()` also drives bridge requests, registered workers and cancellation cleanup.
+`update()` also drives bridges created by `DevModule::bridge`, registered workers and cancellation cleanup.
+For requests independent of that cadence, create a bridge with `development.host().bridge(...)`
+and poll its `BridgeDriver` directly with the executor, including during shutdown.
 Drain is the default. `DevOptions::with_reload_mode(ReloadMode::Restart)` selects [typed Restart](TYPED_RESTART.md).
 It pauses admission after preflight, then waits for roots/children before cutover. Failures after this point stay paused.
 Edits arriving during a pending Restart are processed after it finishes; its shutdown is not rolled back.
@@ -30,15 +32,21 @@ Cargo's dependency graph identifies inputs for the logic and its local dependenc
 
 | Watched input | Coverage |
 | --- | --- |
-| Rust source | `src/` in the logic and local dependencies, plus Cargo target source files |
+| Rust source | `src/` in the logic and local dependencies, plus Cargo target source files and sibling/nested `.rs` modules under each target's directory |
 | Crate configuration | Each `Cargo.toml` and `build.rs` |
-| Workspace configuration | `Cargo.toml`, `Cargo.lock`, and `config` / `config.toml` inside an existing `.cargo` directory |
+| Cargo configuration | Workspace `Cargo.toml` / `Cargo.lock`, and `config` / `config.toml` in `.cargo` directories from the selected manifest's directory through its ancestors, including directories created after startup |
 
-Build inputs exclude `target/`, copied DLLs and logs.
-Overlapping source and build-output paths are rejected. Avoid writing generated files under source directories in custom build scripts too.
+Cargo metadata and builds run from the selected manifest's directory, so they use
+the same project configuration even when the host starts elsewhere.
+Custom target directories such as `implementation/lib.rs` and crate-root `lib.rs` are supported.
+Build inputs exclude local `target/` directories, Cargo's final and intermediate output directories and `.git`.
+The intermediate directory follows `build.build-dir` / `CARGO_BUILD_BUILD_DIR` as resolved by Cargo metadata.
+On Windows, existing filesystem ancestors resolve path spelling differences between configuration and watch notifications, including output directories that do not exist yet.
+Sources inside these output directories are rejected. Avoid writing generated files under source directories in custom build scripts too.
 
 After changing an include file or generated input outside the watch set, also save a watched source file or restart the host.
-Restart after creating a new `.cargo` directory as well.
+Creating, removing or replacing a watched directory refreshes its OS registrations.
+Later saves remain observable even if the directory kept the same path, or its absence or invalid configuration caused a build failure.
 
 Dependency declaration changes refresh the watch set. A build under that new watch set must complete before activation.
 Builds use `--locked`, so update `Cargo.lock` with ordinary Cargo commands first when adding dependencies requires it.
@@ -97,6 +105,14 @@ See [retention and copy cleanup](RETENTION_AND_CLEANUP.md) for the procedure.
 `service_host` builds synchronously; the Tauri sample builds in a background child process.
 The `dev-tools` feature provides build, path and watch helpers in `reknot::development`.
 You can also supply artifacts produced by your own build process.
+
+The lower-level `SourceWatcher` watches only that crate's `src/`, `Cargo.toml`
+and `build.rs`. Keep calling `source_changed` to refresh registrations after
+directory removal or recreation, including when `src/` was initially absent.
+Replacing a manifest/build script and creating a new build script are observed.
+Unrelated files outside `src/` and `.git` entries do not trigger builds. Put
+build output outside `src/`. Custom Cargo targets, local dependencies and Cargo
+configuration discovery require `DevModule` or your own watch configuration.
 
 After building, use `unsafe prepare(path)` to load and check a candidate. Use `activate` for Drain,
 or `restart` to stop, migrate and recreate registered workers.

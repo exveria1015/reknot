@@ -6,14 +6,13 @@ mod permissions;
 mod session;
 pub(crate) use session::directory as session_directory;
 const MANAGED: &str = "managed-v1";
-// Keep the persisted format marker so explicit scans of pre-rename roots work.
-const MAGIC: &str = "flow-reloader-cache-v1";
+const MAGIC: &str = "reknot-cache-v1";
 
 #[derive(Clone, Debug)]
 pub struct CacheOptions {
     /// Dedicated trusted local root; never a build/source directory. The SDK
-    /// writes to root/managed-v1 only. Default uses REKNOT_CACHE_ROOT, the legacy
-    /// FLOW_RELOAD_CACHE_ROOT alias, or temp/reknot (in that order).
+    /// writes to root/managed-v1 only. Default uses REKNOT_CACHE_ROOT when set,
+    /// otherwise temp/reknot.
     pub root: PathBuf,
     pub apply: bool,
     pub max_sessions: usize,
@@ -24,7 +23,6 @@ impl Default for CacheOptions {
     fn default() -> Self {
         Self {
             root: std::env::var_os("REKNOT_CACHE_ROOT")
-                .or_else(|| std::env::var_os("FLOW_RELOAD_CACHE_ROOT"))
                 .map(PathBuf::from)
                 .unwrap_or_else(|| std::env::temp_dir().join("reknot")),
             apply: false,

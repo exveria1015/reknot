@@ -143,14 +143,22 @@ let result = reply.call(Message {
 }).await?;
 ```
 
-生成したホストでは、`DevModule::update()` を約25msごとに呼びます。
-この処理が変更の検出、ビルド結果の適用、キューからの実行、キャンセル後の終了待ちを進めます。
-入力待ちや要求の実行中も呼び続ける構成です。
+生成したホストは、executorのWakerで`BridgeDriver`を直接駆動します。
+要求の受付・再開・キャンセルは保守周期を待ちません。
+reload構成では、ソース変更・ビルド結果・登録ワーカーなどの保守用に
+`DevModule::update()`を約25msごとに呼びます。生成した静的ホストには保守タイマーはありません。
+
+要求の処理中も`/count`、`/quit`、EOFを受け付けます。`/quit`とEOFでは実行中の要求を
+キャンセルし、登録した子処理の終了を待ちます。処理中の通常入力はメッセージを表示して拒否するため、
+次の要求は返信を待ってから送ってください。
 
 ### 独自のホストへ組み込む場合
 
 `DevModule::start(module().builder(), DevOptions::new(manifest, package))` で開発用の更新制御を開始し、
-`development.bridge(BridgeOptions::default())` でクライアントを取得します。
+`development.host().bridge(BridgeOptions::default())` で`(client, driver)`を取得します。
+所有スレッド上のexecutorで`driver`を駆動し、`client.shutdown()`の終了待ち中も駆動を続けます。
+保守用の`development.update()`も引き続き呼びます。
+手動駆動用の`development.bridge(...)`も利用できますが、その要求は`update()`の呼出時だけ進みます。
 初回のビルドは同期処理です。起動後のビルドはバックグラウンドで行います。
 
 `start` は `unsafe` です。ロードするプロジェクト、依存先、将来の編集が SDK のネイティブ実行契約を守ることを、
@@ -187,6 +195,9 @@ cargo run -p typed_bot_host --example framework_bridge --no-default-features --f
 ## キャンセルと終了待ち
 
 `call.cancel()` はキャンセルを要求します。その後も要求を await すると、登録した子処理の終了を確認できます。
+ローカルの`Call`では最初のキャンセル時に最新のWakerへ通知するため、`FuturesUnordered`などの
+通知を受けた要素だけをpollする構成でも終了待ちを進められます。繰り返しのキャンセルでは、
+子処理を待つ要求への通知を繰り返しません。
 結果が先に完了していれば、その結果が返る場合もあります。要求の Future を Drop した場合もキャンセルを要求します。
 
 ブリッジ全体を閉じるときは、次のどちらかを使います。

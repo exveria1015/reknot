@@ -683,8 +683,15 @@ impl RequestTask {
     pub(crate) fn cancel_and_join(&mut self) {
         if self.status.is_none() {
             self.root_status = Some(RunStatus::Error);
-            self.task = None;
             self.control.close();
+            self.task = None;
+            // The owner may have parked this Call inside a selective Future
+            // combinator. Destruction alone does not enqueue its next poll.
+            // Publish the cancellation state before invoking executor code.
+            let waker = self.control.waker.borrow().clone();
+            if let Some(waker) = waker {
+                waker.wake();
+            }
         }
     }
 
@@ -804,6 +811,8 @@ impl Drop for CancelledBatch {
 /// Drives owner-thread cleanup for cancelled/dropped requests, even after their
 /// router is dropped. Pending cleanup remains counted and retains its generation.
 /// Call on the original owner thread; no blocking join or automatic thread spawn.
+/// Each pass polls the requests present at entry. Requests dropped during cleanup
+/// schedule another pass; already-polled I/O waits rely on their own notifications.
 pub fn poll_cancelled_requests(cx: &mut Context<'_>) -> Poll<()> {
     let mut batch =
         CancelledBatch(CANCELLED.with(|queue| std::mem::take(&mut *queue.borrow_mut())));
@@ -830,7 +839,14 @@ pub fn poll_cancelled_requests(cx: &mut Context<'_>) -> Poll<()> {
             true
         }
     });
+    // Work added during this pass has never been polled, so it cannot yet
+    // arrange its own cleanup notification. Do not self-wake for old I/O waits.
+    let added = CANCELLED.with(|queue| !queue.borrow().is_empty());
     drop(batch);
+    // Restore ownership before invoking a potentially reentrant/panicking Waker.
+    if added {
+        cx.waker().wake_by_ref();
+    }
     CANCELLED.with(|queue| {
         if queue.borrow().is_empty() {
             Poll::Ready(())

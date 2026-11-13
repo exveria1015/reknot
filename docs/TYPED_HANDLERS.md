@@ -143,14 +143,24 @@ let result = reply.call(Message {
 }).await?;
 ```
 
-The generated host calls `DevModule::update()` about every 25 ms.
-It detects changes, applies build results, runs queued work and drives cancellation cleanup.
-The loop keeps running while waiting for input and while requests execute.
+The generated host polls `BridgeDriver` directly with the executor's Waker, so
+request admission, resumption and cancellation do not wait for a maintenance tick.
+In reload mode it also calls `DevModule::update()` about every 25 ms for source
+changes, build results, registered workers and other maintenance.
+The static generated host needs no maintenance timer.
+
+`/count`, `/quit` and EOF remain available during a request. `/quit` or EOF cancels
+the current request and waits for its registered children. Additional ordinary
+input while busy is rejected with a message; send the next request after its reply.
 
 ### Integrate a custom host
 
 Start development updates with `DevModule::start(module().builder(), DevOptions::new(manifest, package))`,
-then obtain a client with `development.bridge(BridgeOptions::default())`.
+then obtain `(client, driver)` with `development.host().bridge(BridgeOptions::default())`.
+Poll `driver` on the owner thread with the executor, including while awaiting
+`client.shutdown()`. Continue calling `development.update()` for maintenance.
+`development.bridge(...)` remains available for manual polling, but its requests
+advance only when `update()` is called.
 The initial build is synchronous. Later builds run in the background.
 
 `start` is `unsafe`. The caller must ensure that the project, its dependencies and future edits obey the SDK's native execution contracts.
@@ -187,6 +197,9 @@ Send the returned reply through the host's SDK too. No Discord, Serenity or Twil
 ## Cancel and wait for shutdown
 
 `call.cancel()` requests cancellation. Keep awaiting the request to observe completion of registered child work.
+For a local `Call`, its first cancellation wakes the last registered Waker so a
+parked call can finish through selective combinators such as `FuturesUnordered`.
+Repeated cancellation does not keep waking a call waiting for child cleanup.
 A result that finished first may still be returned. Dropping the request future also requests cancellation.
 
 To close the whole bridge, choose one of these operations:

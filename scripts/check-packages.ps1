@@ -29,7 +29,9 @@ try {
         '--allow-dirty', '--no-verify', '--locked'
     ) + $taskResolution)
 
-    $taskStage = Join-Path $taskMetadata.target_directory ('package-checks/' + [guid]::NewGuid().ToString('N'))
+    # Nested fixture builds must leave room for Cargo's intermediate paths and
+    # MSVC's path limit. New-Item refuses an existing directory; never reuse one.
+    $taskStage = Join-Path $taskMetadata.target_directory ('package-checks/' + [guid]::NewGuid().ToString('N').Substring(0, 8))
     New-Item -ItemType Directory -Path $taskStage | Out-Null
     $taskMembers = @()
     $taskPatches = @()
@@ -144,11 +146,21 @@ fn main() {
         '--locked'
     ) + $taskResolution + @('--', '--test-threads=1'))
     Invoke-CheckedCargo (@(
+        'test', '--manifest-path', $taskManifest, '-p', 'reknot',
+        '--test', 'cancellation_notifications', '--test', 'generation_locals', '--test', 'native_cancellation',
+        '--test', 'cleanup_notifications', '--test', 'notification_unwind', '--test', 'source_watcher',
+        '--locked'
+    ) + $taskResolution + @('--', '--test-threads=1'))
+    Invoke-CheckedCargo (@(
+        'test', '--manifest-path', $taskManifest, '-p', 'reknot', '--test', 'native_typed', '--locked'
+    ) + $taskResolution + @('--', 'native_watch_', '--ignored', '--test-threads=1'))
+    Invoke-CheckedCargo (@(
         'test', '--manifest-path', $taskManifest, '-p', 'reknot', '--no-default-features',
         '--features', 'typed', '--test', 'typed_handlers', '--test', 'typed_services',
-        '--test', 'typed_bridge', '--test', 'typed_contracts', '--test', 'typed_restart', '--test', 'scaffold', '--locked'
+        '--test', 'typed_bridge', '--test', 'typed_contracts', '--test', 'typed_restart',
+        '--test', 'typed_cancellation', '--test', 'scaffold', '--locked'
     ) + $taskResolution)
-    $taskScaffoldFilter = if ($Offline) { @('--', 'generated_workspace_builds_static_and_native_and_keeps_host_state', '--exact', '--ignored', '--test-threads=1') } else { @('--', '--ignored', '--test-threads=1') }
+    $taskScaffoldFilter = if ($Offline) { @('--', 'generated_', '--ignored', '--test-threads=1') } else { @('--', '--ignored', '--test-threads=1') }
     Invoke-CheckedCargo (@(
         'test', '--manifest-path', $taskManifest, '-p', 'reknot', '--test', 'scaffold', '--locked'
     ) + $taskResolution + $taskScaffoldFilter)
@@ -158,7 +170,7 @@ fn main() {
     @{
         archives = $taskArchives
         extracted_workspace = $taskStage
-        checks = @('all-targets/all-features', 'all-targets/no-default-features', 'standalone ABI DLL', 'explicit native reclamation', 'managed generation cleanup', 'typed handlers/services/bridge/contracts/restart', 'generated static and native project', 'static consumer')
+        checks = @('all-targets/all-features', 'all-targets/no-default-features', 'standalone ABI DLL', 'explicit native reclamation', 'managed generation cleanup', 'composed cancellation, legacy ABI rejection and native reclamation', 'nested cleanup notification and host Waker destructor panic', 'low-level and typed watch registration after directory replacement', 'separate intermediate output exclusion and source-overlap rejection', 'typed handlers/services/bridge/contracts/restart/cancellation', 'generated static and native project', 'generated notification-driven console and cancellation', 'static consumer')
     } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $taskStage 'result.json') -Encoding utf8
     Write-Host "Verified extracted SDK packages and consumer: $taskStage"
 } finally {

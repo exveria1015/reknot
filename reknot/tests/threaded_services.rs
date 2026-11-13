@@ -37,6 +37,93 @@ fn block_on<F: Future + Unpin>(mut future: F) -> F::Output {
 }
 
 #[test]
+fn notification_panic_closes_worker_fails_queued_jobs_and_wakes_join() {
+    struct PanicWake;
+    impl Wake for PanicWake {
+        fn wake(self: Arc<Self>) {
+            panic!("reply wake failed");
+        }
+    }
+    let (release, gate) = mpsc::channel();
+    let (started, start) = mpsc::channel();
+    let (mut client, mut worker) = ThreadService::spawn(
+        ThreadServiceLimits {
+            capacity: 3,
+            ..Default::default()
+        },
+        move |operation, input, _| {
+            assert_eq!(
+                operation, 1,
+                "queued I/O must not execute after worker failure"
+            );
+            started.send(()).unwrap();
+            gate.recv().unwrap();
+            Ok(input)
+        },
+    )
+    .unwrap();
+    let mut first = client
+        .start_async(1, b"first", CancellationToken::default())
+        .unwrap();
+    start.recv_timeout(Duration::from_secs(5)).unwrap();
+    let mut second = client
+        .start_async(2, b"second", CancellationToken::default())
+        .unwrap();
+    let mut third = client
+        .start_async(3, b"third", CancellationToken::default())
+        .unwrap();
+    let bad = Waker::from(Arc::new(PanicWake));
+    assert!(first
+        .as_mut()
+        .poll(&mut Context::from_waker(&bad))
+        .is_pending());
+    assert!(second
+        .as_mut()
+        .poll(&mut Context::from_waker(&bad))
+        .is_pending());
+    let replies = Arc::new(AtomicUsize::new(0));
+    let reply_waker = Waker::from(Arc::new(Notify {
+        thread: thread::current(),
+        wakes: replies.clone(),
+    }));
+    assert!(third
+        .as_mut()
+        .poll(&mut Context::from_waker(&reply_waker))
+        .is_pending());
+    let exits = Arc::new(AtomicUsize::new(0));
+    let exit_waker = Waker::from(Arc::new(Notify {
+        thread: thread::current(),
+        wakes: exits.clone(),
+    }));
+    assert!(Pin::new(&mut worker)
+        .poll(&mut Context::from_waker(&exit_waker))
+        .is_pending());
+    release.send(()).unwrap();
+    // A second caught panic during unwinding prints a full backtrace. Interpreting
+    // that diagnostic is much slower than native execution; keep a bounded wait.
+    let deadline = Instant::now() + Duration::from_secs(if cfg!(miri) { 60 } else { 5 });
+    while exits.load(Ordering::Acquire) == 0 {
+        assert!(
+            Instant::now() < deadline,
+            "worker exit did not notify its owner"
+        );
+        thread::park_timeout(Duration::from_millis(1));
+    }
+    assert_eq!(block_on(&mut worker), Err(ServiceError::PANICKED));
+    assert!(client.is_closed());
+    assert_eq!(replies.load(Ordering::Acquire), 1);
+    assert!(matches!(
+        client.start_async(4, &[], CancellationToken::default()),
+        Err(ServiceError::CLOSED)
+    ));
+    assert_eq!(client.outstanding(), 3);
+    assert_eq!(block_on(first).unwrap(), b"first");
+    assert_eq!(block_on(second), Err(ServiceError::PANICKED));
+    assert_eq!(block_on(third), Err(ServiceError::PANICKED));
+    assert_eq!(client.outstanding(), 0);
+}
+
+#[test]
 fn fifo_bounded_queue_cancellation_skips_io_and_completion_notifies_owner() {
     let gate = Arc::new((Mutex::new(false), Condvar::new()));
     let worker_gate = gate.clone();

@@ -78,17 +78,20 @@ cargo run -p reknot --bin reknot-cache --locked -- clean --apply --max-sessions 
 CLI の終了コードは0が完全な走査・操作、1が引数・ルート・ロック等のエラー、2が部分集計・部分失敗です。
 正常な InUse／Legacy のスキップはエラーではありません。
 
-## flow-reloader からの移行
+## キャッシュの設定と保存形式
 
-既定のキャッシュルートは `<temp>/reknot/` に変わりました。
-従来の `<temp>/flow-reloader/` にあるファイルは、自動で移動・削除しません。
-そのディレクトリを調べる場合は `reknot-cache inspect --root <旧ルートの絶対パス>` で明示します。
-掃除する場合は、同じルートに対して `clean --apply` を使います。従来と同じ lease・権限の検査を通った
-適格な管理対象セッションだけを削除します。
+キャッシュルートの指定に使う環境変数は `REKNOT_CACHE_ROOT` だけです。
+未設定なら `<temp>/reknot/` を使います。CLIで明示する `--root` は環境変数より優先します。
+以前の環境変数の別名は参照しません。
 
-保存済みの `managed-v1` 形式と識別子は変更していません。
-`REKNOT_CACHE_ROOT` が未設定なら、旧変数 `FLOW_RELOAD_CACHE_ROOT` も互換用の別名として使えます。
-両方を設定した場合は `REKNOT_CACHE_ROOT` を優先します。
+セッションは `managed-v1/` 配下に置き、`session.meta` の識別子を `reknot-cache-v1` とします。
+検査・掃除が認識する識別子はこれだけです。以前のソース候補のキャッシュ形式には対応せず、
+以前指定していたキャッシュルートを含め、既存ファイルの自動移行・削除は行いません。
+
+未対応の識別子は検査時に `Unknown` として報告します。`clean --apply` はそのファイルを保持し、
+不完全な結果として終了コード2を返します。既に `trash` にある項目は `PartialFailure` として報告します。
+PIDだけを使う項目も `Legacy` として保持します。対応する形式のセッションも、削除前に
+lease・権限の検査を通る必要があります。
 
 ## セッションと排他
 
@@ -136,6 +139,8 @@ cargo test -p reknot --test cache_lifecycle --locked -- --test-threads=1
 - namespace の競合、二つの掃除 CLI の同時 apply、表示後の lease 取得、壊れた／過大な meta、lease 欠落、未知ファイル、旧形式、走査上限。
 - junction とリンク先の sentinel を削除しないこと、trash の途中状態、実際のファイル削除失敗と再試行。
 - CLI の既定が読み取りであることと、明示 apply の削除。
+- Reknotの環境変数だけを使うこと、実ホストが現在の識別子を書き込むこと、未対応形式の
+  session／trashの管理情報とコピーをCLIのapplyでも保持すること。
 
 純粋な Rust の所有・実行経路は Miri でも回帰確認しますが、ファイルロック・DACL・実 DLL の代替検証にはしません。
 ignored の2関数は親から起動する子プロセスの入口です。

@@ -89,10 +89,64 @@ impl Shared {
                 .chain(queue.running.iter().cloned())
                 .collect::<Vec<_>>()
         };
+        let mut failure = None;
         for state in states {
-            state.cancel.cancel();
+            if let Err(payload) =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| state.cancel.cancel()))
+            {
+                failure.get_or_insert(payload);
+            }
         }
         self.ready.notify_all();
+        if let Some(payload) = failure {
+            if !thread::panicking() {
+                std::panic::resume_unwind(payload);
+            }
+        }
+    }
+}
+
+// Always publish terminal state, even when a result notification unwinds out of
+// the worker loop. Join still checks the actual OS thread's return.
+struct WorkerExit(Arc<Shared>);
+impl Drop for WorkerExit {
+    fn drop(&mut self) {
+        let (waiting, running) = {
+            let mut queue = self.0.queue.lock().unwrap();
+            queue.closed = true;
+            (std::mem::take(&mut queue.waiting), queue.running.take())
+        };
+        let mut failure = None;
+        for state in waiting.into_iter().map(|job| job.state).chain(running) {
+            // Failure of one callback must not suppress other replies or join.
+            if let Err(payload) =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| state.cancel.cancel()))
+            {
+                failure.get_or_insert(payload);
+            }
+            if let Err(payload) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                state.finish(Err(ServiceError::PANICKED))
+            })) {
+                failure.get_or_insert(payload);
+            }
+        }
+        let waker = {
+            let mut exit = self.0.exit.lock().unwrap();
+            exit.done = true;
+            exit.waker.take()
+        };
+        if let Some(waker) = waker {
+            if let Err(payload) =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| waker.wake()))
+            {
+                failure.get_or_insert(payload);
+            }
+        }
+        if let Some(payload) = failure {
+            if !thread::panicking() {
+                std::panic::resume_unwind(payload);
+            }
+        }
     }
 }
 /// Safe host message endpoint. May be cloned/moved to other host threads, then
@@ -271,6 +325,7 @@ impl ThreadService {
         let handle = thread::Builder::new()
             .name("reknot-service".into())
             .spawn(move || {
+                let _exit = WorkerExit(worker.clone());
                 loop {
                     let job = {
                         let mut queue = worker.queue.lock().unwrap();
@@ -304,14 +359,6 @@ impl ThreadService {
                     };
                     worker.queue.lock().unwrap().running = None;
                     job.state.finish(result);
-                }
-                let waker = {
-                    let mut exit = worker.exit.lock().unwrap();
-                    exit.done = true;
-                    exit.waker.take()
-                };
-                if let Some(waker) = waker {
-                    waker.wake();
                 }
             })?;
         Ok((

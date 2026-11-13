@@ -3,12 +3,11 @@ use crate::{
     ActivityHandle, ActivityVTable, HandlerHeader, HostWaker, RunStatus, ServiceError,
     ACTIVITY_ABI_VERSION,
 };
-use std::cell::{Cell, RefCell};
 use std::ffi::c_void;
 use std::future::Future;
 use std::pin::Pin;
 use std::rc::Rc;
-use std::task::{Context, Poll, Waker};
+use std::task::{Context, Poll};
 
 pub const MAX_MANAGED_ACTIVITIES: usize = 64;
 
@@ -28,34 +27,24 @@ pub unsafe trait ManagedActivity: 'static {
 }
 
 /// Cooperative cancellation for a locally polled child. Not a thread/spawn API.
+///
+/// ```compile_fail
+/// fn require_send<T: Send>() {}
+/// require_send::<reknot::ChildStop>();
+/// ```
 #[derive(Clone, Default)]
-pub struct ChildStop(Rc<StopState>);
-#[derive(Default)]
-struct StopState {
-    stopped: Cell<bool>,
-    waker: RefCell<Option<Waker>>,
-}
+pub struct ChildStop(Rc<crate::CancellationToken>);
 impl ChildStop {
     pub fn is_requested(&self) -> bool {
-        self.0.stopped.get()
+        self.0.is_cancelled()
     }
+    /// Each wait has its own notification registration, released on completion
+    /// or Drop. Cloned tokens may be awaited concurrently by local futures.
     pub async fn cancelled(&self) {
-        std::future::poll_fn(|cx| {
-            *self.0.waker.borrow_mut() = Some(cx.waker().clone());
-            if self.is_requested() {
-                Poll::Ready(())
-            } else {
-                Poll::Pending
-            }
-        })
-        .await
+        self.0.cancelled().await;
     }
     fn stop(&self) {
-        self.0.stopped.set(true);
-        let waker = self.0.waker.borrow().clone();
-        if let Some(waker) = waker {
-            waker.wake();
-        }
+        self.0.cancel();
     }
 }
 

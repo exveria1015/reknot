@@ -7,6 +7,7 @@ pub const HANDLER_ABI_VERSION: u32 = 5;
 pub const TASK_CONTROL_ABI_VERSION: u32 = 2;
 pub const ACTIVITY_ABI_VERSION: u32 = 1;
 pub const GENERATION_SERVICES_ABI_VERSION: u32 = 1;
+pub const CANCELLATION_ABI_VERSION: u32 = 1;
 pub const MAX_SERVICE_REQUIREMENTS: usize = 32;
 pub const MAX_INIT_BYTES: usize = 1024 * 1024;
 
@@ -90,6 +91,21 @@ pub struct HostTaskVTableExt {
         AccessGenerationLocalFn,
         *mut c_void,
     ) -> u32,
+}
+
+/// Optional cancellation tail after the frozen generation-services ABI 1
+/// prefix. Check the base size and this header's version/size before reading
+/// the callback. Older hosts need not provide this tail.
+#[repr(C)]
+pub struct HostTaskVTableCancellation {
+    pub base: HostTaskVTableExt,
+    pub cancellation: HandlerHeader,
+    /// Returns an owned, inert host task: Done means stop was requested. Each
+    /// task independently registers its current poll Waker and unregisters on
+    /// completion/Drop. It consumes no managed-activity or request capacity.
+    /// The caller must destroy it before releasing the originating task control;
+    /// its Waker callbacks must not unwind across the C ABI.
+    pub cancelled: unsafe extern "C" fn(*mut c_void) -> TaskHandle,
 }
 #[repr(C)]
 #[derive(Clone, Copy)]

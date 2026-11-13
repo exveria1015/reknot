@@ -1,0 +1,16 @@
+[package]
+name = "quiz_host"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+reknot = { path = "../../reknot" }
+quiz_protocol = { path = "../quiz_protocol" }
+axum = { version = "0.8.9", features = ["ws"] }
+futures-util = { version = "0.3", features = ["sink"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "signal", "sync"] }

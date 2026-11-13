@@ -187,6 +187,14 @@ fn legacy_task_control_prefix_does_not_read_or_invoke_an_absent_extension() {
         LOCAL.with(&context, |_| ()),
         Err(ServiceError::UNSUPPORTED_OPERATION)
     );
+    // Notification waiting must fail explicitly on an old host, rather than
+    // reading a missing tail or silently returning a Future that never wakes.
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = Box::pin(context.cancelled())
+            .as_mut()
+            .poll(&mut Context::from_waker(Waker::noop()));
+    }))
+    .is_err());
     drop(context);
     assert_eq!(references.get(), 0);
 
@@ -226,4 +234,80 @@ fn legacy_task_control_prefix_does_not_read_or_invoke_an_absent_extension() {
     );
     drop(context);
     assert_eq!(references.get(), 0);
+
+    // A valid generation-services prefix may have no cancellation extension.
+    use reknot_abi::services::{HostTaskVTableCancellation, GENERATION_SERVICES_ABI_VERSION};
+    unsafe extern "C" fn notification(_: *mut c_void) -> HostWaker {
+        panic!("not invoked by a cancellation wait");
+    }
+    unsafe extern "C" fn with_local(
+        _: *mut c_void,
+        _: *const c_void,
+        _: reknot_abi::services::MakeGenerationLocalFn,
+        _: *mut c_void,
+        _: reknot_abi::services::AccessGenerationLocalFn,
+        _: *mut c_void,
+    ) -> u32 {
+        ServiceError::UNSUPPORTED_OPERATION.0
+    }
+    let mut prefix = HostTaskVTableExt {
+        base: table,
+        extension: HandlerHeader {
+            abi_version: GENERATION_SERVICES_ABI_VERSION,
+            struct_size: std::mem::size_of::<HostTaskVTableExt>() as u32,
+        },
+        notification,
+        with_local,
+    };
+    let request = HandlerRequest {
+        control: HostTaskControl {
+            data: (&references as *const Cell<usize>).cast_mut().cast(),
+            vtable: std::ptr::addr_of!(prefix).cast(),
+        },
+        ..request
+    };
+    let check = |request: &HandlerRequest| {
+        let context = unsafe { RequestContext::from_raw(request) }.unwrap();
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = Box::pin(context.cancelled())
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop()));
+        }))
+        .is_err());
+        drop(context);
+        assert_eq!(references.get(), 0);
+    };
+    check(&request);
+
+    // Unknown/short cancellation tails may contain invalid function-pointer
+    // bytes. Check their header before interpreting that payload (also in Miri).
+    for (version, size) in [
+        (
+            999,
+            std::mem::size_of::<HostTaskVTableCancellation>() as u32,
+        ),
+        (1, 0),
+    ] {
+        prefix.base.header.struct_size = std::mem::size_of::<HostTaskVTableCancellation>() as u32;
+        let mut unknown = std::mem::MaybeUninit::<HostTaskVTableCancellation>::zeroed();
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                std::ptr::addr_of!(prefix).cast::<u8>(),
+                unknown.as_mut_ptr().cast::<u8>(),
+                std::mem::size_of::<HostTaskVTableExt>(),
+            );
+            std::ptr::addr_of_mut!((*unknown.as_mut_ptr()).cancellation).write(HandlerHeader {
+                abi_version: version,
+                struct_size: size,
+            });
+        }
+        let request = HandlerRequest {
+            control: HostTaskControl {
+                data: request.control.data,
+                vtable: unknown.as_ptr().cast(),
+            },
+            ..request
+        };
+        check(&request);
+    }
 }

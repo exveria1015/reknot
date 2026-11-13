@@ -3,11 +3,16 @@ use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::mpsc::{self, Receiver};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
+/// Low-level watch for one crate's `src/`, `Cargo.toml` and `build.rs`.
+/// Call [`source_changed`] regularly to detect edits and refresh registrations.
 pub struct SourceWatcher {
     _watcher: RecommendedWatcher,
-    rx: Receiver<()>,
+    root: PathBuf,
+    changed: Arc<AtomicBool>,
+    refresh: Arc<AtomicBool>,
 }
 
 pub fn library_file_name(package_name: &str) -> String {
@@ -53,79 +58,131 @@ pub fn build_logic(
 }
 
 pub fn start_source_watcher(manifest_dir: &Path) -> Option<SourceWatcher> {
-    let src_dir = manifest_dir.join("src");
-    let cargo_manifest = manifest_dir.join("Cargo.toml");
-    let build_script = manifest_dir.join("build.rs");
-    let (tx, rx) = mpsc::channel();
-    let mut watcher =
-        match notify::recommended_watcher(move |event: Result<notify::Event, notify::Error>| {
-            let Ok(event) = event else {
-                return;
-            };
-            if matches!(
-                event.kind,
-                EventKind::Modify(_) | EventKind::Create(_) | EventKind::Remove(_)
-            ) {
-                let _ = tx.send(());
-            }
-        }) {
-            Ok(watcher) => watcher,
-            Err(err) => {
-                eprintln!("Failed to start source watcher: {err}");
-                return None;
-            }
-        };
-
-    let mut watched_any = false;
-
-    if cargo_manifest.exists() {
-        match watcher.watch(&cargo_manifest, RecursiveMode::NonRecursive) {
-            Ok(()) => watched_any = true,
-            Err(err) => {
-                eprintln!("Failed to watch {}: {err}", cargo_manifest.display());
-            }
+    let root = match manifest_dir.canonicalize() {
+        Ok(root) if root.is_dir() => watch_path(&root),
+        result => {
+            eprintln!(
+                "Cannot watch source directory {}: {result:?}",
+                manifest_dir.display()
+            );
+            return None;
+        }
+    };
+    let changed = Arc::new(AtomicBool::new(false));
+    let refresh = Arc::new(AtomicBool::new(false));
+    match watch_source(&root, changed.clone(), refresh.clone()) {
+        Ok(watcher) => Some(SourceWatcher {
+            _watcher: watcher,
+            root,
+            changed,
+            refresh,
+        }),
+        Err(error) => {
+            eprintln!("Failed to start source watcher: {error}");
+            None
         }
     }
-
-    if build_script.exists() {
-        match watcher.watch(&build_script, RecursiveMode::NonRecursive) {
-            Ok(()) => watched_any = true,
-            Err(err) => {
-                eprintln!("Failed to watch {}: {err}", build_script.display());
-            }
-        }
-    }
-
-    if src_dir.exists() {
-        match watcher.watch(&src_dir, RecursiveMode::Recursive) {
-            Ok(()) => watched_any = true,
-            Err(err) => {
-                eprintln!("Failed to watch {}: {err}", src_dir.display());
-            }
-        }
-    }
-
-    if !watched_any {
-        eprintln!(
-            "Failed to start source watcher: no watchable paths in {}",
-            manifest_dir.display()
-        );
-        return None;
-    }
-
-    Some(SourceWatcher {
-        _watcher: watcher,
-        rx,
-    })
 }
 
+fn watch_path(path: &Path) -> PathBuf {
+    #[cfg(windows)]
+    if let Some(path) = path.to_str() {
+        if let Some(rest) = path.strip_prefix("\\\\?\\UNC\\") {
+            return PathBuf::from(format!("\\\\{rest}"));
+        }
+        if let Some(rest) = path.strip_prefix("\\\\?\\") {
+            return PathBuf::from(rest);
+        }
+    }
+    path.to_path_buf()
+}
+
+fn watch_source(
+    root: &Path,
+    changed: Arc<AtomicBool>,
+    refresh: Arc<AtomicBool>,
+) -> notify::Result<RecommendedWatcher> {
+    let source = root.join("src");
+    let inputs = [root.join("Cargo.toml"), root.join("build.rs")];
+    let event_source = source.clone();
+    let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+        let event = match event {
+            Ok(event) => event,
+            Err(error) => {
+                eprintln!("Source watch failed: {error}; retrying registration on the next check");
+                refresh.store(true, Ordering::Release);
+                return;
+            }
+        };
+        if !matches!(
+            event.kind,
+            EventKind::Create(_) | EventKind::Remove(_) | EventKind::Modify(_)
+        ) {
+            return;
+        }
+        for path in &event.paths {
+            let path = watch_path(path);
+            if path.components().any(|part| part.as_os_str() == ".git") {
+                continue;
+            }
+            // A directory watch follows that instance. Its nonrecursive parent
+            // watches survive removal and observe creation at the same path.
+            let topology = matches!(
+                event.kind,
+                EventKind::Create(_)
+                    | EventKind::Remove(_)
+                    | EventKind::Modify(notify::event::ModifyKind::Name(_))
+            ) && event_source.starts_with(&path);
+            if topology {
+                refresh.store(true, Ordering::Release);
+            }
+            let input = (inputs.contains(&path) || path.starts_with(&event_source))
+                && !(matches!(event.kind, EventKind::Modify(kind)
+                    if !matches!(kind, notify::event::ModifyKind::Name(_)))
+                    && path.is_dir());
+            if topology || input {
+                changed.store(true, Ordering::Release);
+            }
+        }
+    })?;
+    // Directory watches also survive atomic replacement of Cargo.toml/build.rs.
+    // Ancestors cover temporarily absent project directories. Unrelated sibling
+    // changes and target/log writes are filtered before signalling a build.
+    for directory in root.ancestors() {
+        if directory.is_dir() {
+            watcher.watch(directory, RecursiveMode::NonRecursive)?;
+        }
+    }
+    if source.is_dir() {
+        watcher.watch(&source, RecursiveMode::Recursive)?;
+    }
+    Ok(watcher)
+}
+
+/// Coalesce source events and rearm watches after directory replacement.
+/// A successful refresh also reports a change to cover edits during registration.
 pub fn source_changed(watcher: &mut Option<SourceWatcher>) -> bool {
     let Some(watcher) = watcher.as_mut() else {
         return false;
     };
-    let mut triggered = false;
-    while watcher.rx.try_recv().is_ok() {
-        triggered = true;
+    let mut refreshed = false;
+    if watcher.refresh.swap(false, Ordering::AcqRel) {
+        match watch_source(
+            &watcher.root,
+            watcher.changed.clone(),
+            watcher.refresh.clone(),
+        ) {
+            Ok(new) => {
+                watcher._watcher = new;
+                // Force one build under the new registration, covering edits
+                // made between directory creation and installing its watch.
+                refreshed = true;
+            }
+            Err(error) => {
+                watcher.refresh.store(true, Ordering::Release);
+                eprintln!("Failed to refresh source watcher: {error}");
+            }
+        }
     }
-    triggered
+    watcher.changed.swap(false, Ordering::AcqRel) || refreshed
 }

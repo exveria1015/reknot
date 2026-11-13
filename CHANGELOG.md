@@ -6,9 +6,76 @@ tags and their verification records. A version entry alone does not announce pub
 
 ## Unreleased
 
+No unreleased changes.
+
 ## 0.1.0-rc.2
 
-Source candidate for the higher-level API improvements; publication is separate.
+Source release candidate for typed contracts and Restart, the WebSocket quiz,
+notification-driven hosts and reload lifecycle hardening. Publication is separate.
+
+### Examples and host driving
+
+- Playable WebSocket quiz comparison: Axum + Reknot and Fastify + JavaScript share
+  questions/UI, with host-owned connections and scores, editable scoring rules,
+  registered clock checkpoints, Drain/Restart and failure recovery. Includes a
+  two-server launcher, Japanese/English guides and Windows/Linux process tests.
+- Drive generated-host and quiz bridge requests directly from executor wakes;
+  source/build maintenance keeps its separate cadence. Console hosts accept quit
+  and EOF during a request and wait for registered cancellation cleanup.
+
+### Cancellation and notification safety
+
+- Wake parked typed calls on explicit cancellation, so selective Future
+  combinators finish cleanup and unblock Restart. Repeated cancellation is idle.
+- Schedule another bounded cleanup pass for requests dropped during cleanup,
+  preserving queued work if the scheduling Waker panics or reenters cleanup.
+- Contain the final executor Waker destructor panic when a host notification
+  races with request completion, including a simultaneous notification panic.
+- Notify each `RequestContext::cancelled()` and `ChildStop::cancelled()` wait
+  independently, including inside selective Future combinators. Stop and Restart
+  no longer stall on these composed waits. Dropped waits release their Wakers.
+- Add an optional cancellation ABI 1 tail to task-control ABI 2, preserving the
+  base and generation-services prefixes. Rebuild host and logic together: new
+  request cancellation waits fail explicitly on a host without this tail.
+- Contain executor Waker notification and destructor panics on the originating
+  side of the C ABI, including nested cancellation notifications during Restart.
+- Schedule a new activity poll when a child registers another child or starts an
+  asynchronous service, so notification-driven requests do not stall.
+- Notify every `CancellationToken::cancelled()` waiter independently, release
+  dropped registrations, and synchronize registration with concurrent cancellation.
+- Preserve other bridge result/shutdown notifications when one Waker panics.
+  A service worker unwinding from a result notification closes admission, fails
+  queued work and notifies join instead of leaving clients waiting indefinitely.
+
+### Source watching and package verification
+
+- Exclude Cargo's separate intermediate build directory from source watches,
+  including configuration and environment overrides, and reject output/source
+  overlap. Create validated output roots before watching so Cargo's initial
+  directory setup does not trigger an extra reload.
+- Resolve Windows input and output path spelling through the filesystem so
+  differently cased Cargo output paths stay excluded, including new directories.
+  Recheck source/output overlap after creating the output roots.
+- Shorten package-verification and watch-fixture paths so nested Cargo builds
+  fit Windows linker path limits with newer Cargo artifact layouts.
+- Rearm the low-level `SourceWatcher` after source/project directory recreation;
+  also observe replacement of manifest/build scripts and newly created inputs.
+- Watch Rust modules beside custom Cargo targets, excluding build output, and
+  run metadata/build commands from the selected manifest's directory so local
+  Cargo configuration applies consistently.
+- Refresh source watches when input directories are created, removed or replaced.
+  New `.cargo` directories and recreated source directories keep triggering
+  reloads, including recovery after metadata or build failures.
+
+### Cache configuration and format (breaking)
+
+- Use Reknot names throughout the SDK and documentation. `REKNOT_CACHE_ROOT` is
+  the only cache-root environment variable; earlier aliases are no longer read.
+  Its unset default remains `<temp>/reknot/`, and CLI `--root` takes precedence.
+- Write and recognize only `reknot-cache-v1` session metadata under `managed-v1/`.
+  Earlier source-candidate caches are unsupported and are not migrated or cleaned.
+  Unknown session/trash formats and PID-only entries are preserved. Configure the
+  current cache root explicitly if an earlier alias selected a custom location.
 
 ### Breaking typed API changes
 
@@ -49,14 +116,12 @@ See the [release procedure](docs/RELEASING.md) for the final verification gates.
 
 ### Breaking API changes
 
-- Rename flow-reloader to Reknot. The core crates and source directories are now
-  `reknot`, `reknot_abi` and `reknot_macros`; replace former `flow_reload`,
-  `interface` and `hot_macro` dependencies and imports, then rebuild host and logic.
+- Adopt the Reknot core crate and source directory names: `reknot`, `reknot_abi`
+  and `reknot_macros`. Rebuild host and logic together against the renamed SDK.
   The CLI commands are `reknot-new` and `reknot-cache`. The service example uses
   `REKNOT_ADDR`. Default cache copies now live under `<temp>/reknot/` and use
-  `REKNOT_CACHE_ROOT`; the former `FLOW_RELOAD_CACHE_ROOT` remains a fallback alias.
-  Existing cache data is not moved automatically. Its format marker is retained,
-  so `reknot-cache inspect --root <old-absolute-root>` can inspect previous sessions.
+  `REKNOT_CACHE_ROOT`. The cache compatibility initially retained in this source
+  candidate is superseded by the breaking cache changes in `0.1.0-rc.2`.
   The native ABI tables and `hot_handler_api` entry point are unchanged.
 - Use `reload_handler`, `HostResources`, `RequestRouter` and `RequestTask` for
   both native reload and static linking. The earlier runner, direct/snapshot

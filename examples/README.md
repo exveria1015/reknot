@@ -7,6 +7,7 @@ Run commands from the workspace root. 各サンプルは同じメッセージ AP
 
 | Command | What it demonstrates / 確認するもの |
 | --- | --- |
+| `node examples/quiz_room/start.mjs` | Axum + Reknot versus Fastify + JS, playable WebSocket quiz and live scoring/clock edits / 同じ画面でクイズと更新を比較（先に `npm ci --prefix examples/quiz_room/js`） |
 | `cargo run -p typed_bot_host --locked` | Typed functions, persistent host history, stable handles and background reload / 型付き関数と保存後の一括更新 |
 | `cargo run -p service_host --locked` | Host-owned TCP connection and Drain at message boundaries / 同じ接続の次の要求を新世代へ |
 | `cargo run -p reknot --example restart --locked` | Static worker shutdown, checkpoint schema migration, shared load budget / 停止・移行の最小例 |
@@ -25,7 +26,10 @@ Run commands from the workspace root. 各サンプルは同じメッセージ AP
   [Framework bridge](typed_bot_host/examples/framework_bridge.rs):
   `cargo run -p typed_bot_host --example framework_bridge --no-default-features --features static-logic --locked`.
   Calls typed logic from a separate Tokio runtime thread and joins shutdown.
-  自分用の3crate構成は `cargo run -p reknot --bin reknot-new --locked -- ../my-bot` で生成できます。
+  自分用の3crate構成は `cargo run -p reknot --bin reknot-new --locked -- ../my-bot --sdk-path ./reknot` で生成できます。
+- [WebSocket quiz room](../docs/QUIZ_ROOM.md) / [日本語](../docs_ja/QUIZ_ROOM.md):
+  two independent rooms, shared questions/UI, persistent connections/scores across
+  logic edits, typed Restart and a JS comparison adapter. Node.js 22+ and Rust stable.
 - [service_host](service_host/src/main.rs) + [service_logic](service_logic/src/lib.rs):
   one client on `127.0.0.1:4000` (`REKNOT_ADDR` overrides it). Send newline-terminated
   messages; `slow` takes about five seconds. Source edits trigger synchronous builds,

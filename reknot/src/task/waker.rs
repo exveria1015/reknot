@@ -3,8 +3,33 @@ use crate::{HostWaker, HostWakerVTable};
 use std::ffi::c_void;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
+use std::task::Wake;
 use std::task::Waker;
 use std::task::{Context, Poll};
+
+/// Wrap arbitrary executor code before sending its callbacks across a C ABI.
+/// Clones only retain the Arc; notification and final Drop catch user panics.
+pub(crate) fn unwind_safe_waker(waker: &Waker) -> Waker {
+    struct SafeWake(Option<Waker>);
+    impl Wake for SafeWake {
+        fn wake(self: Arc<Self>) {
+            self.wake_by_ref();
+        }
+        fn wake_by_ref(self: &Arc<Self>) {
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                self.0.as_ref().unwrap().wake_by_ref();
+            }));
+        }
+    }
+    impl Drop for SafeWake {
+        fn drop(&mut self) {
+            let waker = self.0.take();
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(waker)));
+        }
+    }
+    Waker::from(Arc::new(SafeWake(Some(waker.clone()))))
+}
 
 /// Polls a logic future with a host waker scoped to this call.
 ///
@@ -142,7 +167,7 @@ pub(crate) fn host_waker_from(
     keep_alive: Option<CodeLease>,
 ) -> (HostWaker, HostWakerGuard) {
     let state = HostWakerState {
-        waker: waker.clone(),
+        waker: unwind_safe_waker(waker),
         keep_alive,
     };
     let data = Box::into_raw(Box::new(state)) as *mut c_void;
@@ -179,6 +204,31 @@ mod tests {
         fn wake_by_ref(self: &Arc<Self>) {
             self.0.fetch_add(1, Ordering::Relaxed);
         }
+    }
+
+    #[test]
+    fn ffi_waker_contains_panics_in_notification_and_final_drop() {
+        struct Panicking(Arc<AtomicUsize>);
+        impl Wake for Panicking {
+            fn wake(self: Arc<Self>) {
+                panic!("executor notification");
+            }
+        }
+        impl Drop for Panicking {
+            fn drop(&mut self) {
+                self.0.fetch_add(1, Ordering::Relaxed);
+                panic!("executor destructor");
+            }
+        }
+        let drops = Arc::new(AtomicUsize::new(0));
+        let original = Waker::from(Arc::new(Panicking(drops.clone())));
+        let safe = unwind_safe_waker(&original);
+        drop(original);
+        let consumed = safe.clone();
+        safe.wake_by_ref();
+        consumed.wake();
+        drop(safe);
+        assert_eq!(drops.load(Ordering::Relaxed), 1);
     }
 
     #[test]

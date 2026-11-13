@@ -12,6 +12,9 @@ use std::sync::{
 };
 use std::task::{Context, Poll, Waker};
 
+#[cfg(test)]
+mod tests;
+
 pub const MAX_ASYNC_BUFFER: usize = 1024 * 1024;
 #[derive(Clone, Copy, Debug)]
 pub struct AsyncLimits {
@@ -48,31 +51,106 @@ pub struct CancellationToken(Arc<CancelState>);
 #[derive(Default)]
 struct CancelState {
     cancelled: AtomicBool,
-    waker: Mutex<Option<Waker>>,
+    waiters: Mutex<Vec<Option<Waker>>>,
 }
 impl CancellationToken {
     pub fn is_cancelled(&self) -> bool {
         self.0.cancelled.load(Ordering::Acquire)
     }
+    /// Wait for cancellation. Each waiting future has an independent notification
+    /// registration, removed when it completes or is dropped.
     pub async fn cancelled(&self) {
-        std::future::poll_fn(|cx| {
-            let new = cx.waker().clone();
-            let old = self.0.waker.lock().unwrap().replace(new);
-            drop(old);
-            if self.is_cancelled() {
-                Poll::Ready(())
-            } else {
-                Poll::Pending
-            }
-        })
+        Cancelled {
+            state: &self.0,
+            slot: None,
+        }
         .await
     }
     pub(crate) fn cancel(&self) {
         self.0.cancelled.store(true, Ordering::Release);
-        let waker = self.0.waker.lock().unwrap().take();
-        if let Some(waker) = waker {
-            waker.wake();
+        let waiters = std::mem::take(&mut *self.0.waiters.lock().unwrap());
+        // Notify outside the lock, including when an executor callback panics
+        // or reenters this token. A failed wake must not strand other waiters.
+        let mut failure = None;
+        for waker in waiters.into_iter().flatten() {
+            if let Err(payload) =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| waker.wake()))
+            {
+                failure.get_or_insert(payload);
+            }
         }
+        if let Some(payload) = failure {
+            std::panic::resume_unwind(payload);
+        }
+    }
+}
+
+struct Cancelled<'a> {
+    state: &'a CancelState,
+    slot: Option<usize>,
+}
+impl Cancelled<'_> {
+    fn unregister(&mut self) {
+        let Some(slot) = self.slot.take() else {
+            return;
+        };
+        let old = {
+            let mut waiters = self.state.waiters.lock().unwrap();
+            // Cancellation may already have drained the registrations.
+            let old = waiters.get_mut(slot).and_then(Option::take);
+            while waiters.last().is_some_and(Option::is_none) {
+                waiters.pop();
+            }
+            old
+        };
+        drop(old);
+    }
+}
+impl Future for Cancelled<'_> {
+    type Output = ();
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
+        let this = self.get_mut();
+        if this.state.cancelled.load(Ordering::Acquire) {
+            this.unregister();
+            return Poll::Ready(());
+        }
+        // Clone and drop Wakers outside the lock: these are executor callbacks.
+        let new = cx.waker().clone();
+        let (cancelled, old) = {
+            let mut waiters = this.state.waiters.lock().unwrap();
+            // Check while holding the registration lock so a concurrent cancel
+            // either drains this waiter or is observed before registration.
+            let cancelled = this.state.cancelled.load(Ordering::Acquire);
+            let old = if cancelled {
+                None
+            } else {
+                let slot = *this.slot.get_or_insert_with(|| {
+                    let slot = waiters
+                        .iter()
+                        .position(Option::is_none)
+                        .unwrap_or(waiters.len());
+                    if slot == waiters.len() {
+                        waiters.push(None);
+                    }
+                    slot
+                });
+                waiters[slot].replace(new)
+            };
+            (cancelled, old)
+        };
+        drop(old);
+        if cancelled {
+            this.unregister();
+            Poll::Ready(())
+        } else {
+            Poll::Pending
+        }
+    }
+}
+impl Drop for Cancelled<'_> {
+    fn drop(&mut self) {
+        self.unregister();
     }
 }
 

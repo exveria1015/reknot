@@ -5,10 +5,10 @@
 ## 型付きハンドラー
 
 ```sh
-cargo test -p reknot --no-default-features --features typed --test typed_handlers --test typed_services --test typed_bridge --test typed_contracts --test typed_restart --locked
+cargo test -p reknot --no-default-features --features typed --test typed_handlers --test typed_services --test typed_bridge --test typed_contracts --test typed_restart --test typed_cancellation --locked
 cargo test -p reknot --test native_typed --locked -- --ignored --test-threads=1
 cargo test -p reknot --test scaffold --locked -- --include-ignored
-cargo test -p typed_bot_host --no-default-features --features static-logic --locked
+cargo test -p typed_bot_host --no-default-features --features static-logic --locked -- --include-ignored
 cargo run -p typed_bot_host --example framework_bridge --no-default-features --features static-logic --locked
 ```
 
@@ -17,11 +17,16 @@ panicの報告、子処理・キャンセル後の終了待ちを検査します
 実DLLテストは隔離プロジェクトでローカル依存先の編集、旧要求と新版の共存、ビルド失敗からの保存による復旧、
 契約変更の拒否、追加編集による古い候補の破棄、新しいローカル依存先の追加と監視、出力による監視の再発火がないことを確認します。
 別スレッドから旧世代へ渡した要求を切り替え後にキャンセルし、登録したネイティブ子処理の終了も待ちます。
+カスタム配置では隣接・入れ子のモジュール、ローカル依存先、Cargo設定を編集して反映を確認し、
+ホストの別cwdからの起動と、生成Rust出力がビルドを再発火させないことも検査します。
 ブリッジ試験は実スレッド、FIFO受付、未受領結果を含む容量、待機中・実行中のキャンセル、
 複数の終了待ち、所有側の破棄、結果通知Wakerのpanic後の継続を確認します。
 生成器は既存ディレクトリ拒否・不正入力を検査し、ignored試験では生成物をビルド・起動して
 静的／ネイティブ構成を確認します。実行中の編集保存で新版に切り替わり、ホストの件数が残ることも検査します。
 配布物検査でも展開済みアーカイブから同じ生成・実行試験を行います。
+生成コンソールは保守周期を1時間に延ばし、即時wakeする要求が完了することを確認します。
+生成ホストとBotサンプルは、Pending要求中のquitとEOFを独立に試し、子処理の終了まで待つことと、
+処理中の通常入力を明示的に拒否することを検査します。ブリッジ・I/OワーカーはWakerのpanic後も他の結果と終了通知が届くことを確認します。
 1MiBのサイズ境界は通常実行で検査し、Miriでは小さい入力で所有・FFIの経路を検査します。
 Miriスクリプトにも両借用モデルの `typed-handlers` / `typed-services` / `typed-bridge` を追加しています。
 契約試験は Serde 両方向、型名・版を変えないフィールド変更、ソース位置、診断のサイズ制限を確認します。
@@ -31,10 +36,23 @@ Git 依存のアプリを生成して、スキーマ出力と native/static 起�
 Miri には `abi-metadata`・`typed-contracts`・`typed-restart` を含め、実際に短い ABI 5 テーブルの読み取りも検査します。
 意味の互換性、フレームワーク固有の SDK 接続、DLL 自動回収、OS 通知の配達保証を証明するものではありません。
 
+`native_watch_`の試験では、起動後の`.cargo`作成、設定ディレクトリの置換と不正な設定からの復旧を確認します。
+ソースディレクトリの削除・再作成・移動後も、その後の編集で更新が続くことを検査します。
+生成物や設定ディレクトリ内の無関係なファイルでビルドが始まらないことも確認し、配布物検査では展開済みアーカイブから同じ試験を行います。
+Cargo設定ファイル・環境変数で別に指定した中間出力先も検査し、生成物では更新せず、通常のソース保存では更新することを確認します。
+出力先とソースが重なる構成は、コンパイル前に拒否することも確認します。
+Windowsでは既存・未作成の出力先の大文字・小文字を変えて検査し、表記差を解決した後もソースとの重複を拒否することを確認します。
+
 ## テストの役割
 
 | 対象 | 確認するもの |
 | --- | --- |
+| `typed_cancellation` | 待機中のCallの明示キャンセル、Restart完了、最新Waker、繰り返しcancelでの自己通知抑制、子の遅延終了 |
+| `cleanup_notifications` | 終了処理中にDropされた要求の次回poll、未完了I/Oの自己通知抑制、通知panic・再入での所有保持 |
+| `notification_unwind` | 要求終了とホスト通知の競合、最後のexecutor WakerのDrop単独／wakeとの同時panic。通常は子プロセス、Miriでは両モデルで直接実行 |
+| `source_watcher` | 低レイヤー監視のソース／プロジェクト再作成、起動時のsrc欠落、manifest・build scriptの置換、出力・ログ・gitの除外 |
+| `activity_notifications` | 子内で登録した子・サービスの通知だけによる完了、1回のpollの範囲、待機中の自己wake抑制、追加poll通知のpanic後の所有保持 |
+| `async_service::tests` | キャンセルの複数待機、Waker更新・解放、Drop・登録枠の再利用、スレッド間の登録・cancel・Drop競合、通知のpanic・再入 |
 | `host_resources` | 所有、失効、資源 ID・版、借用競合、出力容量、panic 境界 |
 | `cache_lifecycle` | 別プロセスのホスト／CLI、画像の状態、Router Drop 後の lease、正常／強制終了、非継承、namespace 競合、trash 再試行、不明／旧形式／リンクの除外 |
 | `request_routing` | 入力コピー、Drain、候補拒否、受付停止・再開、Router より長い実行寿命 |
@@ -140,6 +158,15 @@ ignored の2関数は親テストからだけ呼ぶ子プロセスの入口で�
 これらの OS・ファイル検査は Miri の対象外です。[利用契約](RETENTION_AND_CLEANUP.md) を参照してください。
 
 ## Miri
+
+`typed_cancellation`・`cleanup_notifications`・`notification_unwind`は両借用モデルで実行します。
+配布物検査でもこれらのスイートと実OSの`source_watcher`を展開済みSDKから実行します。
+
+`cancellation_notifications` は `FuturesUnordered` 内での停止・Restart、複数・複製waiter、
+登録のDrop・更新、ルートの終了・Drop、子の失敗を、通知に従ってpollする形で検証します。
+`native_cancellation` は実DLL境界で同様の処理を行い、終了後に両世代のDLLを解放できることも確認します。
+`generation_locals` は未提供・未知バージョンの停止通知拡張について、関数ポインター領域を読まずに拒否する検査を含みます。
+配布パッケージ検査でも3スイートを実行し、静的な検査はMiriの両借用モデルでも実行します。
 
 固定ツールチェーンと Linux インタープリターターゲットを使います。通常ビルドの既定ツールチェーンは変更しません。
 

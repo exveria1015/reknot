@@ -4,7 +4,7 @@ English | [日本語](../docs_ja/README.md) · [Documentation index](INDEX.md)
 
 **Edit and try Rust logic while your application keeps running.**
 
-Reknot (formerly flow-reloader) is a hot-reload SDK for local development.
+Reknot is a hot-reload SDK for local development.
 Keep connections, UI and state in the host, and put the code you want to change in a separate logic crate.
 Save an edit to the logic; once the build and contract checks succeed, new work uses the updated code.
 
@@ -82,6 +82,8 @@ Restart the development host when the budget is exhausted. [Explicit DLL reclama
 but unloading is not automatic, and running work or external effects are not rolled back.
 
 ## Read next
+
+- [WebSocket quiz room](QUIZ_ROOM.md) — Try real Axum integration alongside a Fastify/JS version in the same browser.
 
 - [Typed handlers](TYPED_HANDLERS.md) — Understand the generated code and add handlers.
 - [Troubleshooting](TROUBLESHOOTING.md) — Check why an update, call or shutdown is not completing.

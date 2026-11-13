@@ -36,6 +36,11 @@ An I/O error is separate from an activity failure caused by inability to confirm
 If a persistent worker should treat `CANCELLED` during shutdown as a normal stop, it must handle that case and return `Ok(())`.
 Propagating the error with `?` makes the root end in Error.
 
+`CancellationToken::cancelled().await` supports multiple independent waiters,
+including waiters on cloned tokens and other host threads. Cancellation notifies
+all registered waiters; later waits complete immediately. Dropping a waiting future
+removes its registration without cancelling the operation or other waiters.
+
 ## Limits and result transfer
 
 | Constraint | Default / behavior |
@@ -70,6 +75,9 @@ It uses standard-library threads, Mutex and Condvar without adding a required ru
 ThreadService capacity includes queued work, running work and uncollected replies, shared across all clients.
 Slots remain occupied until completed results are consumed and the necessary owners release them.
 Input and output sizes have independent limits.
+If a reply Waker panics and terminates the worker, it closes admission, fails
+unstarted jobs with `PANICKED` and notifies its join waiter. A result published
+before the notification failed remains available; jobs are not replayed.
 A panic in the I/O handler becomes `PANICKED` for that operation. Recovery is not guaranteed for destructor panics,
 unwinding across FFI, panic=abort or failures in arbitrary host Futures.
 

@@ -1,0 +1,47 @@
+[
+  {
+    "prompt": "Rustで、値の所有権を共有するための型は？",
+    "choices": ["Arc<T>", "Option<T>", "Result<T, E>", "Range<T>"],
+    "answer": 0,
+    "explanation": "Arc<T> は参照カウントによって値の所有権を共有します。"
+  },
+  {
+    "prompt": "WebSocketが得意とする通信は？",
+    "choices": [
+      "一度だけのファイル転送",
+      "サーバーとブラウザーの双方向通信",
+      "CSSの圧縮",
+      "SQLの実行"
+    ],
+    "answer": 1,
+    "explanation": "接続を維持し、双方からメッセージを送れます。"
+  },
+  {
+    "prompt": "JavaScriptでPromiseの完了を待つ構文は？",
+    "choices": ["yield from", "defer", "await", "match"],
+    "answer": 2,
+    "explanation": "async関数などでawaitを使うと、Promiseの結果を待てます。"
+  },
+  {
+    "prompt": "ホットリロード前後で得点を保つには、どこに保存する？",
+    "choices": [
+      "書き換えるソースのコメント",
+      "毎回破棄するローカル変数",
+      "CSSのクラス名",
+      "更新されないホストの状態"
+    ],
+    "answer": 3,
+    "explanation": "このデモでは接続・部屋・得点をホストが持ち、採点ルールと時計処理を更新します。"
+  },
+  {
+    "prompt": "型が一致していても、契約のバージョン変更が必要になり得るのは？",
+    "choices": [
+      "同じフィールドの意味を変更したとき",
+      "コメントを直したとき",
+      "空行を追加したとき",
+      "インデントを直したとき"
+    ],
+    "answer": 0,
+    "explanation": "型やスキーマだけでは意味の互換性は保証できません。"
+  }
+]

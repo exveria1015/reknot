@@ -1,0 +1,11 @@
+[package]
+name = "quiz_protocol"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+reknot = { path = "../../reknot", default-features = false, features = ["typed"] }
+serde = { version = "1", features = ["derive"] }

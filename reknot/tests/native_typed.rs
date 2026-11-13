@@ -48,6 +48,460 @@ fn wait(dev: &mut DevModule, accept: impl Fn(&ReloadEvent) -> bool) -> ReloadEve
     }
 }
 
+fn watch_directory(label: &str) -> PathBuf {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let project = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("tw-{label}-{:x}-{nonce:x}", std::process::id()));
+    std::fs::create_dir_all(&project).unwrap();
+    project
+}
+
+fn watch_fixture(label: &str, source: &str) -> (PathBuf, DevModule) {
+    let project = watch_directory(label);
+    std::fs::create_dir_all(project.join("src")).unwrap();
+    let sdk = env!("CARGO_MANIFEST_DIR").replace('\\', "/");
+    std::fs::write(
+        project.join("Cargo.toml"),
+        format!(
+            "[package]\nname = \"typed_watch_fixture\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\
+             [lib]\ncrate-type = [\"cdylib\"]\n\
+             [dependencies]\nreknot = {{ path = {}, default-features = false, features = [\"typed\"] }}\n\
+             [workspace]\n",
+            serde_json::to_string(&sdk).unwrap()
+        ),
+    )
+    .unwrap();
+    std::fs::write(project.join("src/lib.rs"), source).unwrap();
+    let output = Command::new("cargo")
+        .current_dir(&project)
+        .args(["generate-lockfile", "--offline"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let mut options = DevOptions::new(project.join("Cargo.toml"), "typed_watch_fixture");
+    options.debounce = Duration::from_millis(30);
+    let dev = unsafe { DevModule::start(module().builder(), options) }.unwrap();
+    (project, dev)
+}
+
+fn watch_subprocess(name: &str, project: &std::path::Path, output: Option<&std::path::Path>) {
+    // Scope Cargo overrides to a fresh process, before any watcher threads start.
+    let mut child = Command::new(std::env::current_exe().unwrap());
+    child
+        .args([name, "--exact", "--ignored", "--test-threads=1"])
+        .env("REKNOT_TEST_WATCH_PROJECT", project)
+        .env_remove("CARGO_BUILD_BUILD_DIR")
+        .env_remove("CARGO_TARGET_DIR");
+    if let Some(output) = output {
+        child.env("CARGO_BUILD_BUILD_DIR", output);
+    }
+    let result = child.output().unwrap();
+    assert!(
+        result.status.success(),
+        "{name} in {}\n{}\n{}",
+        project.display(),
+        String::from_utf8_lossy(&result.stdout),
+        String::from_utf8_lossy(&result.stderr)
+    );
+}
+
+fn output_fixture() -> PathBuf {
+    let project = watch_directory("out");
+    std::fs::create_dir(project.join(".cargo")).unwrap();
+    let sdk = env!("CARGO_MANIFEST_DIR").replace('\\', "/");
+    std::fs::write(
+        project.join("Cargo.toml"),
+        format!(
+            "[package]\nname = \"watch_output\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\
+             [lib]\npath = \"lib.rs\"\ncrate-type = [\"cdylib\"]\n\
+             [dependencies]\nreknot = {{ path = {}, default-features = false, features = [\"typed\"] }}\n\
+             [workspace]\n",
+            serde_json::to_string(&sdk).unwrap()
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        project.join("lib.rs"),
+        include_str!("fixtures/typed_logic.rs").replace("typed_helper::label()", "\"initial\""),
+    )
+    .unwrap();
+    let output = Command::new("cargo")
+        .current_dir(&project)
+        .args(["generate-lockfile", "--offline"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    project
+}
+
+fn assert_watch_idle(dev: &mut DevModule) {
+    let generation = dev.host().generation();
+    let until = Instant::now() + Duration::from_millis(900);
+    while Instant::now() < until {
+        let event = dev.update();
+        assert!(
+            event.is_none(),
+            "build output retriggered a reload: {event:?}"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(dev.host().generation(), generation);
+}
+
+#[test]
+#[ignore = "builds native DLLs with Cargo configuration and environment overrides"]
+fn native_watch_intermediate_output_is_excluded_from_reloads() {
+    let Some(project) = std::env::var_os("REKNOT_TEST_WATCH_PROJECT") else {
+        for use_environment in [false, true] {
+            let project = output_fixture();
+            std::fs::write(
+                project.join(".cargo/config.toml"),
+                "[build]\nbuild-dir = \"intermediate\"\n",
+            )
+            .unwrap();
+            let output = project.join("env-output");
+            watch_subprocess(
+                "native_watch_intermediate_output_is_excluded_from_reloads",
+                &project,
+                use_environment.then_some(output.as_path()),
+            );
+        }
+        return;
+    };
+    let project = PathBuf::from(project);
+    let output = std::env::var_os("CARGO_BUILD_BUILD_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| project.join("intermediate"));
+    let mut options = DevOptions::new(project.join("Cargo.toml"), "watch_output");
+    options.debounce = Duration::from_millis(30);
+    let mut dev = unsafe { DevModule::start(module().builder(), options) }.unwrap();
+    assert!(
+        output.join("debug").is_dir(),
+        "Cargo did not use the configured build directory"
+    );
+    assert_watch_idle(&mut dev);
+    // New directories and generated Rust files must both stay outside the
+    // watch set, even beside a crate-root lib.rs.
+    let generated = output.join("generated/nested/output.rs");
+    std::fs::create_dir_all(generated.parent().unwrap()).unwrap();
+    std::fs::write(&generated, "generated output").unwrap();
+    assert_watch_idle(&mut dev);
+    let echo = dev.host().handler(ECHO).unwrap();
+    assert_eq!(ready(echo.call("x".into())).unwrap(), "initial:x");
+    std::fs::write(
+        project.join("lib.rs"),
+        include_str!("fixtures/typed_logic.rs").replace("typed_helper::label()", "\"edited\""),
+    )
+    .unwrap();
+    wait(&mut dev, |event| {
+        matches!(event, ReloadEvent::Reloaded { .. })
+    });
+    assert_eq!(ready(echo.call("x".into())).unwrap(), "edited:x");
+    std::fs::write(&generated, "new generated output").unwrap();
+    assert_watch_idle(&mut dev);
+    std::fs::remove_file(&generated).unwrap();
+    std::fs::remove_dir(generated.parent().unwrap()).unwrap();
+    assert_watch_idle(&mut dev);
+}
+
+#[test]
+#[ignore = "runs Cargo metadata with invalid build directory configurations"]
+fn native_watch_build_output_cannot_overlap_sources() {
+    let Some(project) = std::env::var_os("REKNOT_TEST_WATCH_PROJECT") else {
+        watch_subprocess(
+            "native_watch_build_output_cannot_overlap_sources",
+            &output_fixture(),
+            None,
+        );
+        return;
+    };
+    let project = PathBuf::from(project);
+    let outputs = vec![PathBuf::from("."), PathBuf::from("src/generated")];
+    #[cfg(windows)]
+    let outputs = {
+        let mut outputs = outputs;
+        for output in [&project, &project.join("src/generated")] {
+            outputs.push(PathBuf::from(output.to_string_lossy().to_ascii_lowercase()));
+        }
+        // This source root does not exist yet. Its spelling becomes known only
+        // when the output path is created on a case-insensitive filesystem.
+        outputs.push(project.join("SRC/generated"));
+        outputs
+    };
+    for output in outputs {
+        std::fs::write(
+            project.join(".cargo/config.toml"),
+            format!(
+                "[build]\nbuild-dir = {}\n",
+                serde_json::to_string(&output.to_string_lossy()).unwrap()
+            ),
+        )
+        .unwrap();
+        let result = unsafe {
+            DevModule::start(
+                module().builder(),
+                DevOptions::new(project.join("Cargo.toml"), "watch_output"),
+            )
+        };
+        assert!(
+            matches!(result, Err(Error::Configuration(ref message)) if message.contains("overlaps source inputs")),
+            "output/source overlap was accepted: {}",
+            output.display()
+        );
+    }
+}
+
+#[cfg(windows)]
+#[test]
+#[ignore = "builds native DLLs with Windows output-path spelling differences"]
+fn native_watch_windows_output_spelling_is_excluded() {
+    for exists in [false, true] {
+        let project = output_fixture();
+        let output = project.join("Build/InterMed");
+        let target = project.join("Final/Artifacts");
+        for path in [&output, &target] {
+            std::fs::create_dir_all(if exists { path } else { path.parent().unwrap() }).unwrap();
+        }
+        // Vary existing ancestors and, in the second case, the output root.
+        let output = PathBuf::from(output.to_string_lossy().to_ascii_lowercase());
+        let target = target.to_string_lossy().to_ascii_lowercase();
+        std::fs::write(
+            project.join(".cargo/config.toml"),
+            format!(
+                "[build]\ntarget-dir = {}\n",
+                serde_json::to_string(&target).unwrap()
+            ),
+        )
+        .unwrap();
+        watch_subprocess(
+            "native_watch_intermediate_output_is_excluded_from_reloads",
+            &project,
+            Some(&output),
+        );
+        assert!(project
+            .join("Final/Artifacts/reknot-typed/watch_output/debug")
+            .is_dir());
+    }
+}
+
+#[test]
+#[ignore = "builds native DLLs while creating and replacing Cargo configuration directories"]
+fn native_watch_new_and_recreated_cargo_config_keeps_reloading() {
+    let source = include_str!("fixtures/typed_logic.rs").replace(
+        "typed_helper::label()",
+        "option_env!(\"REKNOT_NATIVE_WATCH_CONFIG\").unwrap_or(\"unset\")",
+    );
+    let (project, mut dev) = watch_fixture("config", &source);
+    let echo = dev.host().handler(ECHO).unwrap();
+    assert_eq!(ready(echo.call("x".into())).unwrap(), "unset:x");
+    let directory = project.join(".cargo");
+    let config = directory.join("config.toml");
+    let configuration = |value: &str| {
+        format!("[env]\nREKNOT_NATIVE_WATCH_CONFIG = {{ value = \"{value}\", force = true }}\n")
+    };
+    assert!(!directory.exists());
+    std::fs::create_dir(&directory).unwrap();
+    for value in ["one", "two"] {
+        std::fs::write(&config, configuration(value)).unwrap();
+        wait(&mut dev, |event| {
+            matches!(event, ReloadEvent::Reloaded { .. })
+        });
+        assert_eq!(ready(echo.call("x".into())).unwrap(), format!("{value}:x"));
+    }
+
+    // Metadata failure must not prevent re-registration of the new directory.
+    // Only files created by this fixture are removed, and remove_dir is empty-only.
+    assert!(directory
+        .canonicalize()
+        .unwrap()
+        .starts_with(project.canonicalize().unwrap()));
+    std::fs::remove_file(&config).unwrap();
+    std::fs::remove_dir(&directory).unwrap();
+    std::fs::create_dir(&directory).unwrap();
+    std::fs::write(&config, "[invalid TOML").unwrap();
+    wait(&mut dev, |event| {
+        matches!(event, ReloadEvent::BuildFailed { .. })
+    });
+    assert_eq!(ready(echo.call("x".into())).unwrap(), "two:x");
+    for value in ["three", "four"] {
+        std::fs::write(&config, configuration(value)).unwrap();
+        wait(&mut dev, |event| {
+            matches!(event, ReloadEvent::Reloaded { .. })
+        });
+        assert_eq!(ready(echo.call("x".into())).unwrap(), format!("{value}:x"));
+    }
+
+    std::fs::create_dir_all(project.join("target/generated")).unwrap();
+    std::fs::write(project.join("target/generated/output.rs"), "output").unwrap();
+    std::fs::write(directory.join("unrelated.log"), "log").unwrap();
+    let until = Instant::now() + Duration::from_millis(650);
+    while Instant::now() < until {
+        assert!(
+            dev.update().is_none(),
+            "non-input files retriggered the build"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+#[test]
+#[ignore = "builds native DLLs while removing, recreating and moving source directories"]
+fn native_watch_replaced_source_directory_keeps_reloading() {
+    let source = |value: &str| {
+        include_str!("fixtures/typed_logic.rs")
+            .replace("typed_helper::label()", &format!("\"{value}\""))
+    };
+    let (project, mut dev) = watch_fixture("source", &source("initial"));
+    let echo = dev.host().handler(ECHO).unwrap();
+    assert_eq!(ready(echo.call("x".into())).unwrap(), "initial:x");
+    let directory = project.join("src");
+    let logic = directory.join("lib.rs");
+    assert!(directory
+        .canonicalize()
+        .unwrap()
+        .starts_with(project.canonicalize().unwrap()));
+    std::fs::remove_file(&logic).unwrap();
+    std::fs::remove_dir(&directory).unwrap();
+    wait(&mut dev, |event| {
+        matches!(event, ReloadEvent::BuildFailed { .. })
+    });
+    assert_eq!(ready(echo.call("x".into())).unwrap(), "initial:x");
+    std::fs::create_dir(&directory).unwrap();
+    for value in ["replacement", "later-edit"] {
+        std::fs::write(&logic, source(value)).unwrap();
+        wait(&mut dev, |event| {
+            matches!(event, ReloadEvent::Reloaded { .. })
+        });
+        assert_eq!(ready(echo.call("x".into())).unwrap(), format!("{value}:x"));
+    }
+
+    // Also replace the directory without waiting for a failed build in between.
+    std::fs::rename(&directory, project.join("old-src")).unwrap();
+    std::fs::create_dir(&directory).unwrap();
+    for value in ["moved", "later-moved-edit"] {
+        std::fs::write(&logic, source(value)).unwrap();
+        wait(&mut dev, |event| {
+            matches!(event, ReloadEvent::Reloaded { .. })
+        });
+        assert_eq!(ready(echo.call("x".into())).unwrap(), format!("{value}:x"));
+    }
+}
+
+#[test]
+#[ignore = "builds custom-layout DLLs and reloads modules and project Cargo configuration"]
+fn custom_modules_and_project_cargo_config_reload_from_an_unrelated_cwd() {
+    let project = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("typed-layout-{}", std::process::id()));
+    for directory in ["implementation", "helper/nested", ".cargo"] {
+        std::fs::create_dir_all(project.join(directory)).unwrap();
+    }
+    let sdk = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .to_string_lossy()
+        .replace('\\', "/");
+    std::fs::write(
+        project.join("Cargo.toml"),
+        format!(
+            r#"
+[package]
+name = "typed_layout_fixture"
+version = "0.0.0"
+edition = "2021"
+[lib]
+path = "implementation/lib.rs"
+crate-type = ["cdylib"]
+[dependencies]
+reknot = {{ path = "{sdk}", default-features = false, features = ["typed"] }}
+typed_helper = {{ path = "helper" }}
+[workspace]
+"#
+        ),
+    )
+    .unwrap();
+    std::fs::write(project.join("helper/Cargo.toml"), "[package]\nname = \"typed_helper\"\nversion = \"0.0.0\"\nedition = \"2021\"\n[lib]\npath = \"lib.rs\"\n").unwrap();
+    std::fs::write(
+        project.join("helper/lib.rs"),
+        "mod nested; pub use nested::label;\n",
+    )
+    .unwrap();
+    let label = |value: &str| format!("pub fn label() -> &'static str {{ \"{value}\" }}\n");
+    let child = project.join("implementation/value.rs");
+    let helper = project.join("helper/nested/mod.rs");
+    std::fs::write(&child, label("v1")).unwrap();
+    std::fs::write(&helper, label("h1")).unwrap();
+    let source = include_str!("fixtures/typed_logic.rs").replace(
+        "typed_helper::label()",
+        "format!(\"{}:{}:{}\", value::label(), typed_helper::label(), env!(\"REKNOT_LAYOUT_CONFIG\"))",
+    );
+    std::fs::write(
+        project.join("implementation/lib.rs"),
+        format!("mod value;\n{source}"),
+    )
+    .unwrap();
+    let config = project.join(".cargo/config.toml");
+    let configuration = |value: &str| {
+        format!("[build]\ntarget-dir = \"build-output\"\n[env]\nREKNOT_LAYOUT_CONFIG = {{ value = \"{value}\", force = true }}\n")
+    };
+    std::fs::write(&config, configuration("c1")).unwrap();
+    let output = Command::new("cargo")
+        .current_dir(&project)
+        .args(["generate-lockfile", "--offline"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_ne!(
+        std::env::current_dir().unwrap().canonicalize().unwrap(),
+        project.canonicalize().unwrap()
+    );
+    let mut options = DevOptions::new(project.join("Cargo.toml"), "typed_layout_fixture");
+    options.debounce = Duration::from_millis(30);
+    let mut dev = unsafe { DevModule::start(module().builder(), options) }.unwrap();
+    let echo = dev.host().handler(ECHO).unwrap();
+    assert_eq!(ready(echo.call("x".into())).unwrap(), "v1:h1:c1:x");
+    assert!(project
+        .join("build-output/reknot-typed/typed_layout_fixture")
+        .is_dir());
+    for (path, contents, expected) in [
+        (&child, label("v2"), "v2:h1:c1:x"),
+        (&helper, label("h2"), "v2:h2:c1:x"),
+        (&config, configuration("c2"), "v2:h2:c2:x"),
+    ] {
+        std::fs::write(path, contents).unwrap();
+        wait(&mut dev, |event| {
+            matches!(event, ReloadEvent::Reloaded { .. })
+        });
+        assert_eq!(ready(echo.call("x".into())).unwrap(), expected);
+    }
+    // The root-level helper lib makes its crate a recursive watch root. Generated
+    // Rust output and unrelated logs must not feed back into the build loop.
+    std::fs::write(project.join("build-output/generated.rs"), "output").unwrap();
+    std::fs::write(project.join("helper/notes.log"), "log").unwrap();
+    std::fs::create_dir_all(project.join("helper/target")).unwrap();
+    std::fs::write(project.join("helper/target/generated.rs"), "output").unwrap();
+    let until = Instant::now() + Duration::from_millis(650);
+    while Instant::now() < until {
+        assert!(
+            dev.update().is_none(),
+            "non-input files retriggered the build"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
 #[test]
 #[ignore = "builds real SDK DLLs and exercises filesystem notifications"]
 fn native_typed_save_reload_failure_recovery_and_old_generation() {
