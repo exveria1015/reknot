@@ -30,7 +30,7 @@ add_subdirectory("${ZSTD_SOURCE_DIR}/build/cmake" zstd-build EXCLUDE_FROM_ALL)
 execute_process(COMMAND "${LLVM_ROOT}/bin/llvm-tblgen.exe" -gen-opt-parser-defs
   -I "${LLVM_ROOT}/include" "${CMAKE_CURRENT_SOURCE_DIR}/vendor/llvm/COFFOptions.td"
   -o "${CMAKE_CURRENT_BINARY_DIR}/COFFOptions.inc" COMMAND_ERROR_IS_FATAL ANY)
-add_library(reknot_jit_bridge SHARED bridge.cpp vendor/llvm/COFFLinkGraphBuilder.cpp)
+add_library(reknot_jit_bridge SHARED bridge.cpp runtime.cpp vendor/llvm/COFFLinkGraphBuilder.cpp)
 target_include_directories(reknot_jit_bridge PRIVATE "${LLVM_ROOT}/include" "${CMAKE_CURRENT_BINARY_DIR}")
 target_compile_definitions(reknot_jit_bridge PRIVATE NOMINMAX _CRT_SECURE_NO_WARNINGS)
 target_compile_options(reknot_jit_bridge PRIVATE /O2 /GR- /utf-8 /Zc:preprocessor)

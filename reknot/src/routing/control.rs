@@ -29,6 +29,7 @@ impl Checkpoint {
 
 pub(super) struct Control {
     pub stop: Cell<bool>,
+    pub cancel_requested: Cell<bool>,
     pub checkpoint: RefCell<Option<Checkpoint>>,
     pub schema: ServiceKey,
     pub max_bytes: usize,
@@ -52,6 +53,7 @@ impl Control {
     ) -> Rc<Self> {
         Rc::new(Self {
             stop: Cell::new(false),
+            cancel_requested: Cell::new(false),
             checkpoint: RefCell::new(checkpoint),
             schema,
             max_bytes,
@@ -81,6 +83,19 @@ impl Control {
         // The root is already terminal/cancelled. Do not wake its executor
         // from completion or Drop; activity stop notifications run during polling.
         self.stop.set(true);
+    }
+    pub fn request_cancel(&self) -> bool {
+        if self.closing.get() || self.cancel_requested.replace(true) {
+            return false;
+        }
+        // Never destroy a future through a shared/reentrant control handle.
+        // Its owning executor performs destruction on the next exclusive poll.
+        self.close();
+        let waker = self.waker.borrow().clone();
+        if let Some(waker) = waker {
+            waker.wake();
+        }
+        true
     }
     pub fn activity_count(&self) -> usize {
         self.activities.borrow().len() + self.polling.get()

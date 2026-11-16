@@ -2,6 +2,32 @@
 
 [English](../docs/TESTING.md) | 日本語
 
+## 実験的なCOFFと二層開発
+
+`jit` / `jit-dev` は任意選択です。通常のテスト実行では実COFFの統合テストは省略されます。
+RustバックエンドにLLVMは不要です。Windows x64 MSVC、PowerShell 7、取得済みのCargo依存を用意し、
+解析・所有権・管理対象の開発フローを次のコマンドで確認します。
+
+```powershell
+cargo test -p reknot --no-default-features --features jit-dev --lib --locked
+cargo test -p reknot --no-default-features --features jit-dev --doc --locked
+cargo test -p reknot --release --no-default-features --features jit-dev --lib stage_de --locked -- --ignored --nocapture --test-threads=1
+cargo test -p reknot --no-default-features --features jit --lib real_coff_verified_layered_identity --locked -- --ignored --nocapture
+```
+
+実際の保存、古いビルド・失敗ビルド、新規依存の修正による復旧、土台の同一性、容量待ち、
+選択的キャンセル、unwind登録とメモリーの実解放、終了不明時の保持を検査します。
+`stage_de` には同じビルド処理を使う編集遅延の比較も含みます。時間を評価する場合は直列に実行し、
+他のCargo処理との同時実行を避けてください。
+確認範囲は[fixtureガイド](../reknot/tests/fixtures/README.md#layered-development-and-managed-reclamation)、
+LLVMブリッジ、runtime/TLS、Rust/LLVM共通の二層fixtureは[コード所有権ガイド](JIT_CODE_OWNERSHIP.md#検証)を参照してください。
+後者はRustローダーだけを検査する場合も、意図的に拒否するemulated TLS入力の生成にnightlyが必要です。
+CIには専用の[Windowsワークフロー](../.github/workflows/jit.yml)があります。
+
+Miriの `generation` / `loaded-handler` はホスト側の保持参照と帰還ガードを、
+`request-routing` / `managed-activities` は退役世代のキャンセルも検査します。
+JIT機械語の実行やWindowsの割り当て・unwind API自体はMiriでは検証しません。
+
 ## 型付きハンドラー
 
 ```sh
@@ -208,6 +234,7 @@ Windows ローカルの成功を Linux や実 GUI の確認結果として扱い
 cargo clippy -p reknot --all-targets --no-default-features --locked -- -D warnings
 cargo test -p reknot --no-default-features --locked
 cargo check -p reknot --no-default-features --features native --locked
+cargo clippy -p reknot --all-targets --no-default-features --features dev-tools --locked -- -D warnings
 cargo test -p service_host --release --no-default-features --features static-logic --locked
 cargo tree -p service_host --no-default-features --features static-logic --edges normal --locked
 ```

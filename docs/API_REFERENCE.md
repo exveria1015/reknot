@@ -110,7 +110,9 @@ Register child work under the existing `spawn_child` and `register_activity` con
 See [development operation](DEVELOPMENT.md) for watching/building and [DLL lifetime](UNLOAD_SAFETY.md) for native code ownership.
 The typed API covers single-module Drain and [typed Restart](TYPED_RESTART.md). `WorkerState<S>` defines checkpoints;
 `start_worker`, `poll_workers`, `stop_worker`, `remove_worker`, `worker_status`, `worker_error` and `worker_checkpoint` manage registered roots.
-`restart` / `restart_api` preserve state; `restart_with` / `restart_api_with` accept an explicit `StateMigration`.
+`restart` / `restart_api` / `restart_loaded` preserve state;
+`restart_with` / `restart_api_with` / `restart_loaded_with` accept an explicit `StateMigration`.
+The `*_loaded` methods consume a `LoadedHandler` through safe APIs, preserving its code owner.
 `ModuleRestart` is an owner-thread future. Failure or interruption keeps admission paused; `resume()` is explicit recovery.
 `DevOptions::with_reload_mode(ReloadMode::Restart)` opts into automatic Restart for unchanged state contracts.
 `Module::schema_json()` exports the full contract. Multi-DLL atomic updates remain outside this API.
@@ -209,6 +211,7 @@ Destructor panics and `panic=abort` are outside recovery guarantees.
 | `activate(candidate)` | Drain; requires matching service and state schemas |
 | `pause()` / `resume() -> Result` | Close/reopen admission, without queuing or replay |
 | `in_flight()` | Count unfinished managed roots, including workers and old Drain generations |
+| `cancel_retired_generation(id)` | Request cancellation only for that retired generation; return newly requested root count |
 | `generation()` / `is_accepting()` / `options()` | Inspect the admission generation, state and limits |
 
 The `unsafe` native-loading contract includes initialization, finalization and callbacks in future replacement candidates too.
@@ -221,6 +224,9 @@ and the unfinished count remains until that work joins.
 The host drives `poll_cancelled_requests(cx)`. `poll_workers` and Restart also drive this queue.
 Cancellation does not undo effects or automatically stop independent unregistered child work.
 External Wakers retain code references; the native default is KeepLoaded.
+`cancel_retired_generation` wakes the owning executor and destroys each unfinished root
+on its next poll, then waits for registered cleanup. It never targets the active generation.
+Completed `RequestTask` handles must still be dropped before their code can be collected.
 
 ### Managed children and external callbacks
 
@@ -258,6 +264,8 @@ A `Checkpoint` contains a `ServiceKey` schema and owned `Vec<u8>` bytes.
 `RouterOptions` defaults to a shared `GenerationBudget` of 32 cumulative load attempts and a 1 MiB checkpoint limit.
 Native attempts are reserved before loading and never refunded, including missing files, failed checks and abandoned candidates.
 Share the budget across router recreation and inspect it through `used()` / `limit()`. It is not a process-wide memory bound.
+Managed COFF `LoadedHandler`s do not consume this cumulative allowance; live image/page
+limits apply instead. Native, LLVM and static/custom entry points keep their existing accounting.
 
 ## Build configurations
 
@@ -266,13 +274,50 @@ Defaults enable `typed`, `native` and `dev-tools`. `typed` provides Serde JSON h
 A `native`-only configuration does not include watching. `reknot-cache` requires `native`.
 
 The opt-in `jit` feature provides `reknot::jit` independently of `native`. Its
-experimental Windows x64 backend needs a separately built LLVM bridge; see
+experimental Windows x64 `JitEngine` needs a separately built LLVM bridge; see
 [the supported subset and build instructions](JIT_CODE_OWNERSHIP.md).
+`JitEngine::open_with_runtime` adds matching dynamic std, emulated TLS and panic
+caught within the generation. `collect_finished_threads` reclaims TLS backing
+storage after OS-confirmed thread exit; it never unloads JIT code.
+`JitEngine::open_layered(bridge, std_dll, support_dll, limits)` adds one explicitly
+named resident support DLL and forbids native/emulated TLS in logic. It preserves
+the same LoadedHandler/Router ownership and KeepLoaded policy. Compiler/support
+identity is the unsafe caller's responsibility; see the two-layer guide above.
+`CoffEngine::open_layered(std_dll, support_dll, CoffLimits)` provides the same
+layered ownership contract using a Rust COFF/bigobj loader on Windows x64 MSVC,
+without LLVM. `CoffLimits` adds a committed-image budget, including BSS and padding.
+Unsupported inputs fail before execution; published code stays loaded.
+`LayeredArtifact::read(manifest)` captures size/hash-checked COFF bytes from the
+schema-2 layered builder. `unsafe into_trusted()` accepts native-code and producer
+trust; then `LayeredEngine::open(&trusted, CoffLimits)` and `load(trusted)` safely
+verify/pin the DLL foundation and reject mismatched logic. One verified foundation
+is allowed per process, and both DLL files remain pinned until exit. These checks
+do not prove arbitrary code safe or a manifest truthful. See the guide for the
+remaining trust contract and the `-FoundationManifest` build reuse option.
+The optional `jit-dev` feature adds `jit::development::LayeredDevSession` and
+`LayeredDevOptions`. `unsafe start` accepts future-code trust; `poll_update` drives
+nonblocking build results and preserves admission on failure or foundation change.
+`unsafe TrustedLayeredArtifact::into_managed()` accepts an additional lifetime
+contract for `LayeredEngine::load_managed`. `collect_retired_coff` is safe, explicit
+owner-thread maintenance; `coff_retention_snapshot` and `LoadedHandler::coff_image_id`
+provide diagnostics without ownership. `unsafe start_managed` extends that contract
+to a development session. `CoffPolicy::Managed` bypasses cumulative load/admission limits;
+`keep_loaded_attempts()` exposes the separately charged KeepLoaded count.
+`ManagedReloadOptions` defaults to two live generations with `ManagedPressure::Wait`;
+`CancelOldest` requests retired-root cancellation when capacity blocks an update.
+Managed `poll_update` maintains only this session's images, preserving one built candidate
+while waiting and superseding it on newer edits. `poll_update_with_context` supplies a Waker
+for cleanup/worker progress; source/build completion still requires periodic polling.
+`WaitingForRetirement`, `RetentionBlocked` and `RecoveryRequired` distinguish ownership
+waiting, capacity shortage and pinned failures. Snapshots expose `policy`, `live_images`
+and the last `reclamation` report. See [layered development and collection](LAYERED_DEVELOPMENT.md)
+for the closed profile, individually audited external adapters, budgets and shutdown.
 Use `default-features = false` in logic crates and statically linked hosts.
 
 | Configuration | Dependency options | Included features |
 | --- | --- | --- |
 | Development host | Defaults | DLL loading, retention diagnostics, copy cleanup, build/watch helpers |
+| Layered COFF development host | `default-features = false, features = ["jit-dev"]` | Background layered builder, watching, checked loading and opt-in managed collection |
 | Host with an external builder | `default-features = false, features = ["native"]` | DLL loading, retention diagnostics and copy cleanup |
 | Logic crate or static host | `default-features = false` | Services, tasks, routing and handler generation |
 | Typed logic or static host | `default-features = false, features = ["typed"]` | Typed input/output and module contracts, without native dependencies |

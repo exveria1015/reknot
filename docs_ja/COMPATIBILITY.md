@@ -15,6 +15,9 @@ Reknot は、ローカル開発中に信頼済みの Rust ロジックを更新�
 | SQLite 移行サンプル | bundled SQLite 用の C コンパイラ |
 | Tauri GUI | 各 OS の Tauri ビルド環境。Windows は WebView2。npm・Tauri CLI は不要 |
 | ネイティブのコア・サンプル | Windows・Linux の CI を設定 |
+| 実験的なRust COFF（`jit`） | Windows x64 MSVCと、コンパイラーを一致させた常駐std/support DLL。LLVMは不要 |
+| 二層開発（`jit-dev`） | Rust COFFの条件に加え、PowerShell 7とリポジトリの二層ビルダー |
+| 実験的なLLVM COFF（`jit`） | Windows x64、MSVC COFF、別途ビルドしたLLVM 23.1.0ブリッジ。emulated TLSにはnightly Rustも必要 |
 | GUI バックエンド | Windows・Linux CI で、実ウィンドウを開かずに検査 |
 | GUI 操作 | Linux の WebView を Xvfb で起動。編集・Drain／Restart・ビルドエラー復帰を検査 |
 | macOS・その他の環境 | このリポジトリでは CI を設定していない |
@@ -22,6 +25,8 @@ Reknot は、ローカル開発中に信頼済みの Rust ロジックを更新�
 CI の設定は検査対象を示すもので、特定の版の成功を保証するものではありません。
 実行方法は [テスト](TESTING.md)、設定は [ワークフロー](../.github/workflows/ci.yml) を参照してください。
 実ウィンドウの表示と操作は、[GUI ガイド](TAURI_GUI_LAB.md) の手順で別途確認します。
+COFFの検査には専用の[Windowsワークフロー](../.github/workflows/jit.yml)を使います。
+対応するオブジェクト・ランタイム構成は[コード所有権ガイド](JIT_CODE_OWNERSHIP.md)を参照してください。
 
 ## API と ABI
 
@@ -42,7 +47,9 @@ CI の設定は検査対象を示すもので、特定の版の成功を保証�
 | サービス・入力・初期化・チェックポイントの形式 | アプリケーションが定義し、必要な箇所で明示的に版を管理 |
 
 ABI メタデータは不一致の検出に使います。ネイティブコードの安全性や、ペイロードの意味までは検査できません。
-ネイティブロードは `unsafe` であり、初期化・終了処理・コールバック・所有データ・コードの寿命を含め、
+ネイティブ実行には `unsafe` な信頼契約が必要です。検証付きCOFFでは `into_trusted` で受け入れ、
+その後はsafeな `LayeredEngine` のメソッドで同一性を検査します。rawなロードAPIは引き続き `unsafe` です。
+初期化・終了処理・コールバック・所有データ・コードの寿命を含め、
 SDK の契約を満たす必要があります。詳細は [API リファレンス](API_REFERENCE.md)、
 API の変更点は [変更履歴](../CHANGELOG.md) を参照してください。
 
@@ -56,8 +63,11 @@ API の変更点は [変更履歴](../CHANGELOG.md) を参照してください�
   Restart では協調停止を使い、登録ワーカーだけを再生成します。
 - ホスト資源の移行に必要な排他、トランザクションの rollback、永続データからの復旧を実装すること。
   DB の commit と Router の切り替えは、クラッシュ時に一括して確定する処理ではありません。
-- 開発セッションの長さを区切ること。KeepLoaded と累積ロード予算には失敗したロードも含まれます。
+- 開発セッションの長さを区切ること。既定のKeepLoadedと累積ロード予算には失敗したロードも含まれます。
   枯渇時はプロセスを再起動し、終了後の適格なコピーは必要に応じて明示的に掃除します。
+- Managed COFFは追加の寿命契約を受け入れる選択です。累積試行数の代わりに実保持数・ページ量を制限し、
+  所有スレッドでの保守、完了ハンドルの破棄、外部処理の終了条件の監査が必要です。std/supportは常駐し、
+  同一性が変わればプロセス再起動が必要です。[二層開発ガイド](LAYERED_DEVELOPMENT.md)を参照してください。
 - 明示回収を使う場合は、外部 Waker の帰還、TLS、依存先等の終了条件をホストで確認すること。
   `unsafe reclaim_native_image` の契約は [DLL の寿命](UNLOAD_SAFETY.md) を参照してください。
 

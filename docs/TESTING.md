@@ -2,6 +2,35 @@
 
 English | [日本語](../docs_ja/TESTING.md)
 
+## Experimental COFF and layered development
+
+The `jit` and `jit-dev` features are opt-in. Ordinary test runs skip the real-COFF
+integration tests. The Rust backend does not need LLVM; run its parser, ownership
+and managed development checks on Windows x64 MSVC with PowerShell 7 and cached
+Cargo dependencies:
+
+```powershell
+cargo test -p reknot --no-default-features --features jit-dev --lib --locked
+cargo test -p reknot --no-default-features --features jit-dev --doc --locked
+cargo test -p reknot --release --no-default-features --features jit-dev --lib stage_de --locked -- --ignored --nocapture --test-threads=1
+cargo test -p reknot --no-default-features --features jit --lib real_coff_verified_layered_identity --locked -- --ignored --nocapture
+```
+
+These integrations cover real source edits, stale/failed builds, newly discovered
+dependency recovery, foundation identity, capacity waits, selective cancellation,
+actual unwind/memory release and conservative retention after uncertain cleanup.
+The `stage_de` filter also includes the same-pipeline edit-latency comparison;
+serialize it and avoid concurrent Cargo workloads when interpreting its timings.
+See the [fixture guide](../reknot/tests/fixtures/README.md#layered-development-and-managed-reclamation)
+for coverage and [code ownership](JIT_CODE_OWNERSHIP.md#verification) for the
+LLVM bridge, runtime/TLS and shared Rust/LLVM layered fixtures. The latter require
+a nightly compiler for the deliberately rejected emulated-TLS input, even when
+testing only the Rust loader. CI uses a [separate Windows workflow](../.github/workflows/jit.yml).
+
+Miri's `generation` and `loaded-handler` groups check host-side leases and return
+guards; `request-routing` and `managed-activities` also cover retired cancellation.
+Miri does not execute JIT machine code or verify Windows allocation/unwind APIs.
+
 ## Typed handlers
 
 ```sh
@@ -214,6 +243,7 @@ A successful local Windows run is not evidence of Linux or real-GUI verification
 cargo clippy -p reknot --all-targets --no-default-features --locked -- -D warnings
 cargo test -p reknot --no-default-features --locked
 cargo check -p reknot --no-default-features --features native --locked
+cargo clippy -p reknot --all-targets --no-default-features --features dev-tools --locked -- -D warnings
 cargo test -p service_host --release --no-default-features --features static-logic --locked
 cargo tree -p service_host --no-default-features --features static-logic --edges normal --locked
 ```

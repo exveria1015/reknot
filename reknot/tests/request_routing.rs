@@ -44,6 +44,23 @@ fn poll(task: &mut RequestTask) -> Poll<RunStatus> {
 }
 
 #[test]
+fn cancel_retired_requests_before_their_first_poll() {
+    let host = HostResources::new();
+    let session = host.register(KEY, Session::default());
+    let mut router = unsafe { RequestRouter::from_api(api(), host) }.unwrap();
+    let mut first = router.dispatch(session.id(), b"first").unwrap();
+    let mut second = router.dispatch(session.id(), b"second").unwrap();
+    router
+        .activate(unsafe { router.prepare_api(api()) }.unwrap())
+        .unwrap();
+    assert_eq!(router.cancel_retired_generation(1), 2);
+    assert_eq!(poll(&mut first), Poll::Ready(RunStatus::Error));
+    assert_eq!(poll(&mut second), Poll::Ready(RunStatus::Error));
+    assert!(session.try_borrow().unwrap().0.is_empty());
+    assert_eq!(router.in_flight(), 0);
+}
+
+#[test]
 fn drain_cutover_owns_input_and_keeps_old_requests_and_host_resources_alive() {
     let host = HostResources::new();
     let session = host.register(KEY, Session::default());

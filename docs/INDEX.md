@@ -35,6 +35,7 @@ Use this index to find a topic when you need it during implementation or develop
 ## Continue development
 
 - [Development operation](DEVELOPMENT.md) — Watch sources, build and switch, recover from failure and observe limits.
+- [Layered COFF development](LAYERED_DEVELOPMENT.md) — Build on a background worker, handle foundation changes and opt into managed code reclamation.
 - [Troubleshooting](TROUBLESHOOTING.md) — Find checks by symptom or error.
 - [Retention and copy cleanup](RETENTION_AND_CLEANUP.md) — Inspect loaded images, cache sessions and files left after exit.
 - [Compatibility and scope](COMPATIBILITY.md) — Check prerequisites, SDK/ABI requirements and application responsibilities.

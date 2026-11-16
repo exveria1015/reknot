@@ -10,7 +10,8 @@ use std::rc::Rc;
 /// [`crate::RequestRouter::prepare_loaded`]; no raw callbacks escape this API.
 /// Tasks, their destruction, host call-return guards and escaped host Wakers
 /// retain the original generation. Dropping or forgetting this handle never
-/// automatically unloads code. JIT images remain resident until process exit.
+/// automatically unloads code. JIT images default to process residency; explicitly
+/// managed Rust COFF images can be collected through owner-thread maintenance.
 ///
 /// This is a single-use, owner-thread value, not a shared function table.
 /// ```compile_fail
@@ -49,6 +50,31 @@ impl LoadedHandler {
 
     pub fn state_schema(&self) -> ServiceKey {
         self.api.state_schema
+    }
+
+    /// Physical COFF identity. This diagnostic ID does not retain or reacquire code.
+    #[cfg(feature = "jit")]
+    pub fn coff_image_id(&self) -> Option<crate::jit::CoffImageId> {
+        self.image
+            .as_ref()
+            .and_then(|g| g.code.coff.as_ref())
+            .map(|c| c.id)
+    }
+
+    #[cfg(feature = "jit")]
+    pub fn coff_policy(&self) -> Option<crate::jit::CoffPolicy> {
+        self.image
+            .as_ref()
+            .and_then(|g| g.code.coff.as_ref())
+            .map(|c| c.policy)
+    }
+
+    pub(crate) fn needs_generation_budget(&self) -> bool {
+        #[cfg(feature = "jit")]
+        if self.coff_policy() == Some(crate::jit::CoffPolicy::Managed) {
+            return false;
+        }
+        true
     }
 
     /// Native DLL identity, if any. This identifier does not retain code.

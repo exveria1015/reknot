@@ -60,7 +60,7 @@ This contract includes OS-level DLL initialization; metadata checks cannot verif
 ## Admission cutover and native reclamation
 
 The initial release must control admission and the lifetime of managed work.
-The message API uses KeepLoaded and does not automatically reclaim old DLLs.
+Native DLL loading uses KeepLoaded and does not automatically reclaim old DLLs.
 The shared load budget defaults to 32 cumulative attempts. It bounds the number of attempts, not memory usage.
 Restart the development process when the budget is exhausted.
 
@@ -68,6 +68,12 @@ Physical reclamation requires more than a reference count: DLL calls must have r
 Hosts that can establish these conditions may use `unsafe reclaim_native_image`.
 The SDK rechecks retirement, owned references and host-initiated call returns. External Waker returns, TLS and dependencies remain the host's responsibility.
 See [DLL lifetime](UNLOAD_SAFETY.md) for the procedure and retention reasons.
+
+The optional Windows COFF backend uses `LoadedHandler` to carry the same code
+ownership into the Router. Checked `Managed` COFF loads additionally permit
+owner-thread collection under an explicit lifetime contract and live image/page
+limits. They bypass the cumulative attempt budget; KeepLoaded paths retain it.
+See [layered development and reclamation](LAYERED_DEVELOPMENT.md).
 
 ## Integration design
 

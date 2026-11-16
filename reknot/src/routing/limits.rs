@@ -4,6 +4,8 @@ use std::rc::Rc;
 
 /// Shared conservative lifetime load budget. KeepLoaded never refunds a slot,
 /// even for a rejected/abandoned native candidate. Share across router recreation.
+/// Managed COFF LoadedHandlers do not consume slots; native, LLVM and static/custom
+/// entry points retain their existing accounting.
 #[derive(Clone, Debug)]
 pub struct GenerationBudget(Rc<Budget>);
 #[derive(Debug)]

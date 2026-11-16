@@ -110,7 +110,9 @@ Tokio では所有側を `current_thread` または `LocalSet` で動かしま�
 監視とビルドの条件は [開発時の運用](DEVELOPMENT.md)、ネイティブコードの寿命は [DLL の寿命](UNLOAD_SAFETY.md) を参照してください。
 型付き API は単一モジュールの Drain と [型付き Restart](TYPED_RESTART.md) に対応します。チェックポイントは `WorkerState<S>` で定義し、
 `start_worker`、`poll_workers`、`stop_worker`、`remove_worker`、`worker_status`、`worker_error`、`worker_checkpoint` で登録ルートを管理します。
-`restart` / `restart_api` は状態を維持し、`restart_with` / `restart_api_with` は明示的な `StateMigration` を受け取ります。
+`restart` / `restart_api` / `restart_loaded` は状態を維持し、
+`restart_with` / `restart_api_with` / `restart_loaded_with` は明示的な `StateMigration` を受け取ります。
+`*_loaded` はsafeなAPIで `LoadedHandler` を消費し、コードの所有者を維持します。
 `ModuleRestart` は所有スレッドで進める Future です。失敗・中断時は受付停止を維持し、`resume()` で明示的に復旧します。
 `DevOptions::with_reload_mode(ReloadMode::Restart)` で、状態契約を変えない自動 Restart を選べます。
 `Module::schema_json()` は契約全体を出力します。複数 DLL の一括更新は対象外です。
@@ -210,6 +212,7 @@ ServiceError と捕捉した unwind は RunStatus::Error へ変換し、元の�
 | `activate(candidate)` | Drain。サービスと状態スキーマの一致が必要 |
 | `pause()` / `resume() -> Result` | 受付を停止・再開。キューイングと再実行はしない |
 | `in_flight()` | 登録ワーカーと旧 Drain 世代を含む管理対象ルートの未完了数 |
+| `cancel_retired_generation(id)` | 指定した退役世代だけにキャンセルを要求し、新たに要求したroot数を返す |
 | `generation()` / `is_accepting()` / `options()` | 受付世代・状態・上限を確認 |
 
 ネイティブロードは今後の置換候補も含め、初期化・終了・コールバックの契約を守ることが unsafe の条件です。
@@ -222,6 +225,9 @@ RequestTask は Future・世代・制御を所有し、Router より長く生存
 ホストは `poll_cancelled_requests(cx)` を進めます。`poll_workers` と Restart もこのキューを進めます。
 副作用の取り消しや未登録の独立した子処理の自動停止は行いません。
 外部 Waker はコード参照を保持し、ネイティブの既定は KeepLoaded です。
+`cancel_retired_generation` は所有executorを起こし、その次のpollで未完了rootを破棄してから
+登録済みの後始末を待ちます。現用世代は対象外です。完了した `RequestTask` も、
+ハンドルをDropするまではコードを保持します。
 
 ### 登録した子処理と外部コールバック
 
@@ -260,6 +266,8 @@ Checkpoint は ServiceKey スキーマと所有 Vec<u8> です。
 RouterOptions の既定は共有 GenerationBudget の累積ロード32枠、チェックポイント1 MiB。
 ネイティブ枠はロード前に予約し、ファイル不存在・検査失敗・破棄候補も返却しません。
 Router 再作成時も同じ予算を共有でき、used()・limit() で確認します。プロセス全体のメモリ上限ではありません。
+Managed COFFの `LoadedHandler` はこの累積枠を消費せず、実保持数・ページ量で制限します。
+native、LLVM、static/customの既存の計上は維持します。
 
 ## ビルド構成
 
@@ -268,13 +276,46 @@ Router 再作成時も同じ予算を共有でき、used()・limit() で確認�
 `native` だけを指定した構成には監視機能を含めません。`reknot-cache` は `native` が必要です。
 
 任意選択の `jit` featureは、`native` と独立して `reknot::jit` を提供します。
-実験的なWindows x64バックエンドには別途ビルドしたLLVMブリッジが必要です。
+実験的なWindows x64の `JitEngine` には別途ビルドしたLLVMブリッジが必要です。
 [対応範囲とビルド手順](JIT_CODE_OWNERSHIP.md)を参照してください。
+`JitEngine::open_with_runtime` は一致する動的std、emulated TLS、世代内で捕捉するpanicに対応します。
+`collect_finished_threads` はOSがスレッド終了を確認した後にTLSの格納領域を回収し、
+JITコードはアンロードしません。
+`JitEngine::open_layered(bridge, std_dll, support_dll, limits)` は明示した一つのsupport DLLを
+常駐させ、ロジックのnative/emulated TLSを拒否します。LoadedHandler/Routerの所有権と
+KeepLoaded方針は共通です。コンパイラーとsupportの一致はunsafeな呼び出し側の責任です。
+詳しくは上記ガイドの二層構成を参照してください。
+`CoffEngine::open_layered(std_dll, support_dll, CoffLimits)` は、Windows x64 MSVCの
+Rust COFF/bigobjローダーで同じ二層の所有権契約を提供し、LLVMを必要としません。
+`CoffLimits` はBSSやページ余白を含む実割り当ての予算も指定します。
+未対応の入力は実行前に拒否し、公開したコードは保持します。
+`LayeredArtifact::read(manifest)` は二層ビルダーのschema 2からサイズ・ハッシュを検証したCOFFを
+取得します。`unsafe into_trusted()` でコードと生成元への信頼を明示した後は、safeな
+`LayeredEngine::open(&trusted, CoffLimits)` と `load(trusted)` がDLLの土台を検証・固定し、
+不一致のlogicを拒否します。検証済み土台はプロセスごとに一つで、両DLLのファイルを終了まで固定します。
+任意のコードの安全性やmanifestの正しさを証明する検査ではありません。残る信頼契約と、
+ビルドで土台を再利用する `-FoundationManifest` は上記ガイドを参照してください。
+任意選択の `jit-dev` は `jit::development::LayeredDevSession` / `LayeredDevOptions` を提供します。
+`unsafe start` で将来の編集を含む信頼契約を受け入れ、`poll_update` で非同期ビルド結果を進めます。
+`unsafe TrustedLayeredArtifact::into_managed()` は追加の管理寿命契約を受け入れる操作で、
+`LayeredEngine::load_managed` に渡せます。`collect_retired_coff` は所有スレッドのsafeな明示回収、
+`coff_retention_snapshot` / `LoadedHandler::coff_image_id` は所有権を持たない診断です。
+開発セッションへの追加契約は `unsafe start_managed` で指定します。
+`CoffPolicy::Managed` は累積ロード・受付枠を消費せず、KeepLoadedの使用数は
+`keep_loaded_attempts()` で別に取得します。`ManagedReloadOptions` の既定は実保持2世代と
+`ManagedPressure::Wait` です。`CancelOldest` は容量で更新が止まった場合に最古の退役rootのキャンセルを要求します。
+Managedの `poll_update` は自身のイメージだけを回収対象とし、容量待ちのビルド済み候補は一つ保持します。
+新しい編集は待機候補を置き換えます。`poll_update_with_context` は後始末とworkerへWakerを渡しますが、
+ソース変更・ビルド完了には定期pollが必要です。`WaitingForRetirement`、`RetentionBlocked`、
+`RecoveryRequired` で所有終了待ち、容量不足、回収不能を区別し、snapshotには `policy`、
+`live_images`、直近の `reclamation` を含みます。
+対応範囲、外部アダプターごとの条件、予算、終了処理は[二層開発ガイド](LAYERED_DEVELOPMENT.md)を参照してください。
 ロジック crate と静的リンクのホストでは `default-features = false` を指定してください。
 
 | 構成 | 依存の指定 | 含まれる機能 |
 | --- | --- | --- |
 | 開発ホスト | 既定 feature | DLL ロード・保持量観測・コピー掃除、ビルド・監視補助 |
+| 二層COFF開発ホスト | `default-features = false, features = ["jit-dev"]` | 非同期ビルド・監視・検証付きロード・明示選択した管理回収 |
 | 外部で成果物をビルドするホスト | `default-features = false, features = ["native"]` | DLL ロード・保持量観測・コピー掃除 |
 | ロジック crate・静的ホスト | `default-features = false` | サービス・タスク・ルーティング・ハンドラー生成 |
 | 型付きロジック・静的ホスト | `default-features = false, features = ["typed"]` | 型付き入出力・モジュール契約。ネイティブ依存なし |

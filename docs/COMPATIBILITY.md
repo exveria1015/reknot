@@ -15,6 +15,9 @@ use the same message API and ownership contracts.
 | SQLite migration example | A C compiler for bundled SQLite |
 | Tauri GUI | Platform Tauri prerequisites; WebView2 on Windows; no npm or Tauri CLI |
 | Native core and examples | Windows and Linux CI jobs are configured |
+| Experimental Rust COFF (`jit`) | Windows x64 MSVC; compiler-matched resident std/support DLLs; no LLVM required |
+| Layered development (`jit-dev`) | Rust COFF requirements plus PowerShell 7 and the repository's layered builder |
+| Experimental LLVM COFF (`jit`) | Windows x64, MSVC COFF and a separately built LLVM 23.1.0 bridge; emulated TLS additionally requires nightly Rust |
 | GUI backend | Windows and Linux CI integration without opening a window |
 | GUI interaction | Linux WebView under Xvfb; editor, Drain/Restart and build-error recovery |
 | macOS / other targets | No CI coverage in this repository |
@@ -23,6 +26,8 @@ CI configuration describes what is checked, not a guarantee that a particular
 revision has passed. See [testing](TESTING.md) and the
 [workflow](../.github/workflows/ci.yml). Interactive window behavior is checked
 separately using the [GUI guide](TAURI_GUI_LAB.md).
+COFF checks have a separate [Windows workflow](../.github/workflows/jit.yml).
+See [code ownership](JIT_CODE_OWNERSHIP.md) for the accepted object/runtime profiles.
 
 ## API and ABI
 
@@ -43,7 +48,9 @@ See [build configurations](API_REFERENCE.md#build-configurations) for the settin
 | Service, input, init and checkpoint formats | Application-defined, explicitly versioned where applicable |
 
 ABI metadata checks reject incompatible tables; they do not prove native code
-safety or payload meaning. Native-loading APIs are `unsafe`. Initialization,
+safety or payload meaning. Native execution requires an `unsafe` trust contract;
+the checked COFF API accepts it through `into_trusted`, then checks identity through
+safe `LayeredEngine` methods. Raw native-loading APIs remain `unsafe`. Initialization,
 finalization, callbacks, owned data and code lifetimes must all meet SDK contracts.
 See the [API reference](API_REFERENCE.md) and [breaking changes](../CHANGELOG.md).
 
@@ -58,9 +65,13 @@ See the [API reference](API_REFERENCE.md) and [breaking changes](../CHANGELOG.md
 - Implement resource exclusion, transaction rollback and durable recovery when
   migrating host resources. Router installation and database commit are not
   one crash-atomic operation.
-- Bound development sessions. Loaded images use KeepLoaded; failed load attempts
+- Bound development sessions. Images default to KeepLoaded; failed load attempts
   also consume the shared cumulative budget. Restart the process when exhausted,
   and explicitly clean eligible exited-session files as needed.
+- Managed COFF is an additional opt-in lifetime contract. It uses live image/page
+  capacity instead of cumulative attempts, and requires owner-thread maintenance,
+  completed-handle disposal and audited external joins. std/support stay resident;
+  changing their identity requires restarting the process. See [layered development](LAYERED_DEVELOPMENT.md).
 - Explicit `unsafe reclaim_native_image` requires host proof of external return,
   Waker return, TLS and dependency quiescence. See [DLL lifetime](UNLOAD_SAFETY.md).
 

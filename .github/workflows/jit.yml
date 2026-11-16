@@ -7,7 +7,7 @@ on:
       - 'reknot_abi/**'
       - 'reknot_macros/**'
       - 'native/jit/**'
-      - 'scripts/*jit.ps1'
+      - 'scripts/*jit*.ps1'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - '.github/workflows/jit.yml'
@@ -17,12 +17,42 @@ on:
       - 'reknot_abi/**'
       - 'reknot_macros/**'
       - 'native/jit/**'
-      - 'scripts/*jit.ps1'
+      - 'scripts/*jit*.ps1'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - '.github/workflows/jit.yml'
 
 jobs:
+  windows-rust-coff:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Rust
+        run: |
+          rustup update stable --no-self-update
+          rustup default stable
+          rustup toolchain install nightly-2026-11-02 --profile minimal --no-self-update
+      - name: Rust loader bounds, rollback and protection
+        run: cargo test -p reknot --no-default-features --features jit-dev --lib --locked
+      - name: Layered development and managed physical reclamation
+        run: cargo test -p reknot --release --no-default-features --features jit-dev --lib stage_de --locked -- --ignored --nocapture --test-threads=1
+      - name: Managed artifact trust type boundaries
+        run: cargo test -p reknot --no-default-features --features jit-dev --doc --locked
+      - name: Layered COFF without LLVM
+        run: |
+          $env:REKNOT_JIT_TOOLCHAIN = 'nightly-2026-11-02'
+          cargo test -p reknot --no-default-features --features jit --lib real_coff_rust_layered --locked -- --ignored --nocapture
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:REKNOT_JIT_LAYERED_CRATE_TYPE = 'lib'
+          $env:REKNOT_JIT_LAYERED_OPT = '0'
+          $env:REKNOT_JIT_LAYERED_DEBUG = '0'
+          cargo test -p reknot --no-default-features --features jit --lib real_coff_rust_layered --locked -- --ignored --nocapture
+      - name: Verified build identity and safe reload
+        run: cargo test -p reknot --no-default-features --features jit --lib real_coff_verified_layered_identity --locked -- --ignored --nocapture
   windows-coff:
     runs-on: windows-latest
     timeout-minutes: 30
@@ -35,6 +65,7 @@ jobs:
         run: |
           rustup update stable --no-self-update
           rustup default stable
+          rustup toolchain install nightly-2026-11-02 --profile minimal --no-self-update
       - uses: actions/cache@v4
         with:
           path: target/jit-deps
@@ -44,7 +75,9 @@ jobs:
       - name: Build versioned bridge
         run: |
           ./scripts/build-jit.ps1 -LlvmRoot target/jit-deps/clang+llvm-23.1.0-x86_64-pc-windows-msvc -ZlibSource target/jit-deps/zlib-1.3.1 -ZstdSource target/jit-deps/zstd-1.5.7 -Testing
-      - name: Actual COFF ownership and rejection tests
+      - name: Actual COFF ownership, layered SDK, std, TLS and panic tests
         run: |
           $env:REKNOT_JIT_BRIDGE = (Resolve-Path target/jit-bridge/Release/reknot_jit_bridge.dll).Path
-          cargo test -p reknot --features jit --lib jit::tests::real_coff --locked -- --ignored --nocapture
+          $env:REKNOT_JIT_TOOLCHAIN = 'nightly-2026-11-02'
+          $env:REKNOT_JIT_LAYERED_TOOLCHAIN = 'stable'
+          cargo test -p reknot --features jit --lib real_coff --locked -- --ignored --nocapture

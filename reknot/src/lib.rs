@@ -22,6 +22,8 @@ mod task;
 mod thread_service;
 #[cfg(feature = "typed")]
 pub mod typed;
+#[cfg(any(all(feature = "dev-tools", feature = "typed"), feature = "jit-dev"))]
+mod watch_inputs;
 
 pub use activity::{ChildStop, ManagedActivity, MAX_MANAGED_ACTIVITIES};
 pub use async_service::{

@@ -195,6 +195,14 @@ pub struct PreparedHandler {
 }
 
 impl PreparedHandler {
+    /// Physical COFF identity without retaining or reacquiring code.
+    #[cfg(feature = "jit")]
+    pub fn coff_image_id(&self) -> Option<crate::jit::CoffImageId> {
+        self.image
+            .as_ref()
+            .and_then(|g| g.code.coff.as_ref())
+            .map(|c| c.id)
+    }
     /// Native artifact identity without extending its lifetime. Static APIs have none.
     #[cfg(feature = "native")]
     pub fn artifact_id(&self) -> Option<crate::ArtifactId> {
@@ -254,7 +262,9 @@ impl RequestRouter {
         if options.max_checkpoint_bytes == 0 {
             return Err(RouteError::InvalidLimits);
         }
-        options.generations.reserve()?;
+        if handler.needs_generation_budget() {
+            options.generations.reserve()?;
+        }
         let (api, image) = handler.into_parts();
         Self::create(api, image, resources, options, environment)
     }
@@ -274,7 +284,9 @@ impl RequestRouter {
             .id
             .checked_add(1)
             .ok_or(RouteError::GenerationExhausted)?;
-        self.options.generations.reserve()?;
+        if handler.needs_generation_budget() {
+            self.options.generations.reserve()?;
+        }
         let (api, image) = handler.into_parts();
         self.candidate(api, image, environment)
     }
@@ -646,6 +658,15 @@ impl RequestRouter {
     pub fn generation(&self) -> u64 {
         self.active.id
     }
+    /// Active physical COFF identity; unrelated to this router's generation counter.
+    #[cfg(feature = "jit")]
+    pub fn coff_image_id(&self) -> Option<crate::jit::CoffImageId> {
+        self.active
+            .image
+            .as_ref()
+            .and_then(|g| g.code.coff.as_ref())
+            .map(|c| c.id)
+    }
     /// Native artifact identity without extending its lifetime. Static APIs have none.
     #[cfg(feature = "native")]
     pub fn artifact_id(&self) -> Option<crate::ArtifactId> {
@@ -661,6 +682,34 @@ impl RequestRouter {
             generation.in_flight.get() != 0 || generation.activity_failed.get()
         });
         before - self.retired.len()
+    }
+
+    /// Cancel only roots of a retired generation. Each root is destroyed on its
+    /// executor's next poll, then registered activities must finish joining.
+    /// Active admission is unchanged. This does not unload code, roll back
+    /// effects, or force a running native call to return.
+    pub fn cancel_retired_generation(&self, generation: u64) -> usize {
+        let Some(retired) = self.retired.iter().find(|g| g.id == generation) else {
+            return 0;
+        };
+        let controls: Vec<_> = retired
+            .controls
+            .borrow()
+            .iter()
+            .filter_map(Weak::upgrade)
+            .collect();
+        controls.into_iter().filter(|c| c.request_cancel()).count()
+    }
+
+    #[cfg(feature = "jit-dev")]
+    pub(crate) fn cancel_retired_image(&self, image: crate::jit::CoffImageId) -> usize {
+        let generation = self.retired.iter().find(|g| {
+            g.image
+                .as_ref()
+                .and_then(|owner| owner.code.coff.as_ref())
+                .is_some_and(|c| c.id == image)
+        });
+        generation.map_or(0, |g| self.cancel_retired_generation(g.id))
     }
     pub fn service(&self) -> ServiceKey {
         self.active.api.service
@@ -785,6 +834,11 @@ impl Future for RequestTask {
         }
         *self.control.waker.borrow_mut() = Some(cx.waker().clone());
         self.control.notification_gate.update(cx.waker());
+        if self.control.cancel_requested.get() && self.root_status.is_none() {
+            self.root_status = Some(RunStatus::Error);
+            self.control.close();
+            self.task = None;
+        }
         if self.root_status.is_none() {
             if let Poll::Ready(status) = Pin::new(self.task.as_mut().unwrap()).poll(cx) {
                 self.task = None;

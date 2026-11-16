@@ -164,6 +164,51 @@ fn candidate(router: &RequestRouter) -> PreparedHandler {
 }
 
 #[test]
+fn retired_cancellation_is_selective_and_waits_for_join() {
+    let (mut router, session, probe) = setup();
+    let mut old = router.dispatch(session.id(), b"callback").unwrap();
+    assert!(poll(&mut old).is_pending());
+    router.activate(candidate(&router)).unwrap();
+    let mut current = router.dispatch(session.id(), b"callback").unwrap();
+    assert!(poll(&mut current).is_pending());
+    assert_eq!(
+        router.cancel_retired_generation(2),
+        0,
+        "cannot cancel the active generation"
+    );
+    assert_eq!(router.cancel_retired_generation(1), 1);
+    assert_eq!(
+        router.cancel_retired_generation(1),
+        0,
+        "idempotent cancellation"
+    );
+    assert!(
+        poll(&mut old).is_pending(),
+        "external callback has not joined"
+    );
+    assert_eq!(probe.drops.get(), 0);
+    assert_eq!(router.in_flight(), 2);
+    assert!(poll(&mut current).is_pending());
+    probe.allow_join.set(true);
+    assert_eq!(poll(&mut old), Poll::Ready(RunStatus::Error));
+    assert_eq!(
+        probe.rejected.get(),
+        0,
+        "root was dropped, not resumed past cancellation"
+    );
+    assert_eq!(probe.drops.get(), 1);
+    assert!(
+        poll(&mut current).is_pending(),
+        "new requests were not cancelled"
+    );
+    drop(old);
+    assert_eq!(router.release_retired_generations(), 1);
+    current.cancel();
+    assert!(poll_cancelled_requests(&mut cx()).is_ready());
+    assert_eq!(probe.drops.get(), 2);
+}
+
+#[test]
 fn local_child_shutdown_delays_worker_restart_and_uses_committed_checkpoint() {
     let (mut router, session, probe) = setup();
     router

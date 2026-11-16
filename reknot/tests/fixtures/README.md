@@ -1,5 +1,30 @@
 # Standalone ABI fixtures
 
+`jit_layered_support.rs` and `jit_layered_logic.rs` form an isolated Cargo project
+in the layered JIT test. Support is a compiler-matched Rust dylib containing the
+real SDK and non-generic serde_json services; logic is emitted as a single COFF
+with CGU=1, LTO disabled, dynamic std and panic=unwind. Support uses native TLS;
+logic uses GenerationLocal. Rejection variants include native TLS and an external
+TLS index without a TLS section. The test also rejects the separate emulated-TLS
+fixture, missing support imports and malformed inputs. These fixtures are included
+in the package and only reference its own SDK, not sibling example sources.
+The LLVM and Rust loaders use the same generated objects and DLLs. The Rust
+integration runs without a bridge; its fast-build variant uses a Cargo library
+object with opt-level=0/debuginfo=0 and repeats the same panic/cancellation checks.
+`REKNOT_JIT_LAYERED_CRATE_TYPE`, `REKNOT_JIT_LAYERED_OPT` and
+`REKNOT_JIT_LAYERED_DEBUG` select those test build settings.
+The verified-identity integration also builds these sources through the repository's
+PowerShell 7 `build-layered-jit.ps1`, including foundation reuse and dependency-change
+rejection. Fresh child processes check safe open/load, immutable object snapshots,
+DLL tampering, file/directory pinning, preloaded DLL rejection and old/new requests
+after a mismatched foundation is refused. It requires the repository checkout and
+cached Cargo dependencies; outputs stay under `target/layered-identity-fixtures`.
+
+`jit_std_handler.rs` uses the same frozen ABI with a compiler-matched dynamic std
+DLL, emulated TLS and panic=unwind. The optional Windows JIT integration compiles
+it with nightly Rust and checks allocation/synchronization, old/new TLS isolation,
+thread-exit destructors, concurrent TLS collection and nested panic cleanup.
+
 `jit_handler.rs` and `jit_compute.rs` use the frozen ABI without std, allocation,
 CRT or TLS. They compile as COFF objects for the optional real JIT test, with one
 task slot per image. Variants deliberately request bad ABI, TLS and unresolved
@@ -32,3 +57,37 @@ watching, typed return values, Drain, build recovery and contract rejection.
 It uses `FuturesUnordered` to check nested/multiple cancellation waits, dropped
 registrations, root/child cleanup and Restart. Native tests also reclaim both
 generations after every cancellation registration has been released.
+
+# Layered development and managed reclamation
+
+The `jit_stage_de_tests` acceptance tests use the layered SDK fixtures with the
+PowerShell producer. Run on Windows x64 MSVC without LLVM:
+
+```powershell
+cargo test -p reknot --release --no-default-features --features jit-dev --lib stage_de --locked -- --ignored --nocapture --test-threads=1
+```
+
+Tests cover real saves, superseded builds, syntax failure, foundation restart,
+source-directory replacement, newly discovered local dependencies, attempt limits,
+writer serialization, interrupted publication, cache corruption and capacity.
+The failed-dependency regression adds a local dependency that cannot compile, then
+fixes only that dependency. Both KeepLoaded and Managed must rebuild without retry,
+preserve the active generation, and still report changed foundations as restart-required.
+Managed fixtures cover 128 physical releases with default cumulative engine/Router
+limits (neither allowance is consumed), completed-but-held requests, locals,
+panic payloads, cancellation, reentrant host collection and late resident notifications.
+The joined-thread adapter holds a synchronization barrier after releasing its Waker,
+then proves final return through join. Adapter panic, forgotten ownership and failed
+local destruction remain retained. This fixture does not certify external runtimes.
+Development pressure cases cover Wait, CancelOldest, joined external callbacks,
+exact page capacity, superseded pending candidates and pinned cleanup failures.
+They verify that current admission survives, completed handles still prevent release,
+and automatic collection leaves other controllers' images alone. KeepLoaded exhaustion
+stops new builds as well as loads, including after retry.
+Windows unit tests also inject unwind-removal/VirtualFree failures and inspect actual
+`VirtualQuery` / `RtlLookupFunctionEntry` state. Injected failures are not naturally
+occurring OS errors. Serialize performance tests to avoid measuring concurrent Cargo.
+The edit-latency test compares the same producer/input-discovery pipeline on a
+worker and synchronously, with a warm Cargo target, 50 ms debounce and 5 ms owner
+polling. It records save-to-first-new-response and the longest old-response gap;
+three samples per mode are descriptive measurements, not a latency guarantee.

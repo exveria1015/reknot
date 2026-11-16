@@ -6,14 +6,66 @@ tags and their verification records. A version entry alone does not announce pub
 
 ## Unreleased
 
+- Keep `dev-tools` usable without `typed` by gating the shared typed/JIT watcher
+  to its consumers; check that feature combination and JIT fixture formatting in CI.
+- Add optional `jit-dev` layered development sessions: one background producer,
+  shared source watching, revision/graph checks, structured job receipts, immutable
+  cache publication and foundation restart reporting. Preserve active requests on
+  failed/stale builds; retain the engine and its KeepLoaded allowance through retries.
+- Refresh layered dependency watches even when artifact generation fails after input
+  discovery, so fixing a newly added local dependency triggers another build without
+  an explicit retry. Preserve the active generation and foundation restart checks.
+- Add explicitly trusted managed COFF artifacts and owner-thread collection, with
+  unique physical image IDs, live page budgets, local/activity diagnostics, exclusive
+  ownership sealing, unwind removal and checked VirtualFree. KeepLoaded remains the
+  default; DLL foundations, raw/LLVM loads and uncertain releases remain resident.
+  Audit external activity adapters individually; no general runtime unload guarantee.
+- Name the reclaimable policy `Managed` and replace its cumulative engine/Router
+  attempt limits with reusable live image/page capacity. KeepLoaded keeps its existing
+  limits. Managed development defaults to two live generations and `Wait`; optional
+  `CancelOldest` requests cancellation of the oldest retired roots and still waits for
+  cleanup, join and ownership release. Maintain only the session's images, preserve a
+  built candidate during capacity waits and report pinned failures without accumulating
+  more generations. Add selective `RequestRouter::cancel_retired_generation`.
+
 - Add move-only, owner-thread `LoadedHandler` values that carry handler tables
   and code owners together, with safe router and typed Drain/Restart entry points.
   Host call-return guards now retain code as well as counting active calls.
 - Add an opt-in `jit` feature and separately built LLVM 23.1.0 COFF/JITLink bridge
   for trusted, self-contained Windows x64 objects. Bound load attempts and input
   bytes, register unwind tables before publication, and keep linked images resident
-  on ABI rejection, abandonment and Drop. General Rust runtime/TLS support, automatic
-  JIT reclamation and watcher/Cargo integration remain unsupported.
+  on ABI rejection, abandonment and Drop. The LLVM backend retains this policy;
+  the checked Rust backend has the opt-in development/managed path above.
+- Extend the experimental JIT bridge with a compiler-matched resident Rust
+  std DLL, emulated TLS and in-generation panic unwinding. Preserve TLS per thread
+  and generation; reclaim backing storage only after OS-confirmed thread exit.
+  Add `open_with_runtime`, `collect_finished_threads` and a nightly object builder.
+  Native TLS, arbitrary dependent archives and cross-host unwinding remain unsupported.
+- Add `JitEngine::open_layered` and bridge ABI 3 for a resident, explicitly named
+  support DLL alongside std. Reject native and emulated TLS in logic while allowing
+  OS-managed TLS in support. Exercise actual SDK-generated COFF generations with
+  resident JSON services, GenerationLocal cleanup, managed cancellation and panic.
+  Rebuild the bridge; support/compiler identity remains an unsafe caller contract.
+  The Rust dylib fixture is compiler-specific; a stable support ABI
+  and LLVM code reclamation remain outside that backend.
+- Add `jit::CoffEngine` and `CoffLimits`, a Rust COFF/bigobj backend for the
+  Windows x64 MSVC layered profile without LLVM. Bound image allocation including
+  BSS, validate symbols/relocations, apply W^X protection and register native unwind
+  tables before executing code. Preserve LoadedHandler ownership and KeepLoaded;
+  roll back pre-execution failures. Reject unsupported forms rather than emulate
+  CRT, TLS or startup. Run both backends against the same layered SDK fixtures.
+- Add `build-layered-jit.ps1` for Cargo-managed layered COFF builds. Use a logic
+  library artifact to avoid the redundant PE DLL/PDB link, with configurable
+  optimization/debug information. Schema-2 manifests identify immutable DLL/object
+  copies; freeze the actual Cargo support dependency while building logic. Reuse a
+  verified foundation with `-FoundationManifest`, failing before publication when
+  dependencies require rebuilding support. Changed foundations require host restart.
+- Add `LayeredArtifact`, `TrustedLayeredArtifact` and `LayeredEngine` to move
+  foundation matching into safe Rust APIs. Capture immutable object bytes, check
+  compiler/build/DLL identities, and pin both DLL files and their canonical parent
+  directories until process exit. Reject mismatches and externally preloaded DLLs;
+  preserve the old generation after rejection. Native-code/producer trust remains
+  explicit through `unsafe into_trusted()`; hashes do not establish code safety.
 - Keep the GUI smoke client's HTTP/1.1 connection open instead of forwarding
   per-request `Connection: close` through tauri-driver's native connection pool.
   CI repeats the real WebView test three times with read retries disabled and
