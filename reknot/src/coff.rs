@@ -5,8 +5,7 @@ use std::marker::PhantomData;
 use std::path::Path;
 use std::rc::Rc;
 
-#[path = "coff/artifact.rs"]
-mod artifact;
+use super::artifact;
 #[path = "coff/format.rs"]
 mod format;
 pub use artifact::{
@@ -20,7 +19,7 @@ pub use retention::{
 };
 #[cfg(all(windows, target_arch = "x86_64", target_env = "msvc"))]
 #[path = "coff/platform.rs"]
-mod platform;
+pub(super) mod platform;
 
 /// Input/attempt limits and a separate bound on the committed image, including
 /// BSS, import slots, jump stubs, alignment and page padding. Parser quotas are
@@ -55,15 +54,15 @@ impl Default for CoffLimits {
 /// ```
 pub struct CoffEngine {
     #[cfg(all(windows, target_arch = "x86_64", target_env = "msvc"))]
-    runtime: platform::Runtime,
-    limits: CoffLimits,
-    attempts: usize,
-    keep_loaded_attempts: usize,
-    last_image: Option<CoffImageId>,
-    last_metrics: Option<JitLoadMetrics>,
+    pub(super) runtime: platform::Runtime,
+    pub(super) limits: CoffLimits,
+    pub(super) attempts: usize,
+    pub(super) keep_loaded_attempts: usize,
+    pub(super) last_image: Option<CoffImageId>,
+    pub(super) last_metrics: Option<JitLoadMetrics>,
     #[cfg(all(test, windows, target_arch = "x86_64", target_env = "msvc"))]
     pub(super) last_symbols: std::collections::HashMap<Vec<u8>, usize>,
-    _owner_thread: PhantomData<Rc<()>>,
+    pub(super) _owner_thread: PhantomData<Rc<()>>,
 }
 impl CoffEngine {
     /// Load the exact compiler-matched std and support DLLs. Only their exports,
@@ -156,7 +155,7 @@ impl CoffEngine {
         }
     }
 
-    fn begin_load(&mut self, policy: CoffPolicy) -> Result<(), JitError> {
+    pub(super) fn begin_load(&mut self, policy: CoffPolicy) -> Result<(), JitError> {
         self.last_metrics = None;
         self.last_image = None;
         if policy == CoffPolicy::KeepLoaded {

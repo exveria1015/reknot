@@ -6,6 +6,19 @@ tags and their verification records. A version entry alone does not announce pub
 
 ## Unreleased
 
+- Add experimental `jit::ElfEngine` / `ElfLimits` for Linux x86_64 GNU ELF64
+  relocatable objects, without an LLVM bridge. Resolve PIC/GOT/PLT relocations
+  against explicit resident std/support shared libraries and GNU runtimes,
+  protect code RX/data RW, register `.eh_frame` before entry and preserve handler
+  ownership through cutover, panic and controller Drop. Bound input, image and
+  cumulative session memory; reject TLS/startup hooks and unsupported relocations.
+  KeepLoaded remains the default. Add schema-3 checked artifacts, sealed memfd
+  std/support snapshots, automatic foundation matching, and opt-in Managed
+  libgcc deregistration/munmap through the shared ownership registry. Add the
+  Python ELF producer and Linux `jit-dev` source watching with Wait/CancelOldest
+  pressure, failed-build recovery and foundation restart reporting. Preserve
+  existing Windows APIs and add common `Jit*` aliases. Test real Linux objects,
+  128 managed updates, OS release, failed cleanup and source-watch flows in CI.
 - Keep `dev-tools` usable without `typed` by gating the shared typed/JIT watcher
   to its consumers; check that feature combination and JIT fixture formatting in CI.
 - Add optional `jit-dev` layered development sessions: one background producer,

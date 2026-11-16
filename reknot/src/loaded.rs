@@ -11,7 +11,7 @@ use std::rc::Rc;
 /// Tasks, their destruction, host call-return guards and escaped host Wakers
 /// retain the original generation. Dropping or forgetting this handle never
 /// automatically unloads code. JIT images default to process residency; explicitly
-/// managed Rust COFF images can be collected through owner-thread maintenance.
+/// managed Rust COFF/ELF images can be collected through owner-thread maintenance.
 ///
 /// This is a single-use, owner-thread value, not a shared function table.
 /// ```compile_fail
@@ -55,24 +55,50 @@ impl LoadedHandler {
     /// Physical COFF identity. This diagnostic ID does not retain or reacquire code.
     #[cfg(feature = "jit")]
     pub fn coff_image_id(&self) -> Option<crate::jit::CoffImageId> {
+        if cfg!(windows) {
+            self.jit_image_id()
+        } else {
+            None
+        }
+    }
+    /// Physical ELF identity, without retaining code.
+    #[cfg(feature = "jit")]
+    pub fn elf_image_id(&self) -> Option<crate::jit::JitImageId> {
+        if cfg!(target_os = "linux") {
+            self.jit_image_id()
+        } else {
+            None
+        }
+    }
+    /// Physical identity of the native Rust JIT backend, without retaining code.
+    #[cfg(feature = "jit")]
+    pub fn jit_image_id(&self) -> Option<crate::jit::JitImageId> {
         self.image
             .as_ref()
-            .and_then(|g| g.code.coff.as_ref())
+            .and_then(|g| g.code.jit.as_ref())
             .map(|c| c.id)
     }
 
     #[cfg(feature = "jit")]
     pub fn coff_policy(&self) -> Option<crate::jit::CoffPolicy> {
+        if cfg!(windows) {
+            self.jit_policy()
+        } else {
+            None
+        }
+    }
+    #[cfg(feature = "jit")]
+    pub fn jit_policy(&self) -> Option<crate::jit::CoffPolicy> {
         self.image
             .as_ref()
-            .and_then(|g| g.code.coff.as_ref())
+            .and_then(|g| g.code.jit.as_ref())
             .map(|c| c.policy)
     }
 
     pub(crate) fn needs_generation_budget(&self) -> bool {
         #[cfg(feature = "jit")]
         {
-            self.coff_policy() != Some(crate::jit::CoffPolicy::Managed)
+            self.jit_policy() != Some(crate::jit::CoffPolicy::Managed)
         }
         #[cfg(not(feature = "jit"))]
         {

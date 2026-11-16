@@ -2,7 +2,7 @@
 pub use reknot::*;
 use std::cell::Cell;
 
-// Native TLS is allowed here: the Windows loader initializes this PE DLL.
+// Native TLS is allowed here: the OS loader initializes this resident library.
 thread_local! { static PARSES: Cell<u64> = const { Cell::new(0) }; }
 
 // Keep serde's non-generic work resident. Re-exporting serde alone would not

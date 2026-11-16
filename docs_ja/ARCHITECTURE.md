@@ -70,8 +70,8 @@ OS の DLL 初期化も含めてこの契約を守る必要があり、メタデ
 SDK は退役・所有参照・呼び出し帰還を再検査します。外部 Waker の帰還、TLS、依存先はホストの契約です。
 手順と保持理由は [DLL の寿命](UNLOAD_SAFETY.md) を参照してください。
 
-任意選択のWindows COFFバックエンドは、`LoadedHandler` で同じコード所有権をRouterへ渡します。
-検証付きManaged COFFでは追加の寿命契約と実保持数・ページ量の上限に従い、所有スレッドで回収できます。
+任意選択のWindows COFF・Linux ELFバックエンドは、`LoadedHandler` で同じコード所有権をRouterへ渡します。
+検証付きManaged COFF/ELFでは追加の寿命契約と実保持数・ページ量の上限に従い、所有スレッドで回収できます。
 Managedは累積試行数の枠を消費せず、KeepLoadedの経路では従来の枠を維持します。
 詳細は[二層開発と回収](LAYERED_DEVELOPMENT.md)を参照してください。
 

@@ -23,9 +23,9 @@ use windows_sys::Win32::System::Threading::GetCurrentProcess;
 
 #[path = "identity_windows.rs"]
 mod identity_windows;
-pub(super) use identity_windows::open_verified_foundation;
-#[path = "retention_windows.rs"]
-pub(super) mod retention;
+pub(in crate::jit) use identity_windows::open_verified_foundation;
+#[path = "../jit_retention.rs"]
+pub(in crate::jit) mod retention;
 
 // The MSVC CRT defines this actual table in std_type_info_static.obj. Referencing
 // it pulls the real definition into the host; no fabricated RTTI/personality.
@@ -38,7 +38,7 @@ fn os_error(operation: &str) -> JitError {
     error(format!("{operation}: {}", std::io::Error::last_os_error()))
 }
 #[derive(Clone)]
-pub(super) struct Runtime {
+pub(in crate::jit) struct Runtime {
     // LoadLibrary reference counts are intentionally never decremented, including
     // partially successful opens. Handles are not arbitrary process-wide scopes.
     modules: Vec<usize>,
@@ -646,7 +646,7 @@ fn plan_link(
 }
 
 #[cfg(feature = "jit-dev")]
-pub(super) fn required_image_bytes(
+pub(in crate::jit) fn required_image_bytes(
     engine: &mut CoffEngine,
     bytes: &[u8],
 ) -> Result<usize, JitError> {
@@ -724,7 +724,10 @@ fn link(
     })
 }
 
-pub(super) unsafe fn load(engine: &mut CoffEngine, path: &Path) -> Result<LoadedHandler, JitError> {
+pub(in crate::jit) unsafe fn load(
+    engine: &mut CoffEngine,
+    path: &Path,
+) -> Result<LoadedHandler, JitError> {
     let start = Instant::now();
     let file = std::fs::File::open(path).map_err(JitError::Io)?;
     let mut bytes = Vec::new();
@@ -753,7 +756,7 @@ pub(super) unsafe fn load(engine: &mut CoffEngine, path: &Path) -> Result<Loaded
 
 /// Caller has already consumed an attempt and, for the checked API, verified
 /// identity. Never reopen a pathname after verifying these exact bytes.
-pub(super) unsafe fn load_bytes(
+pub(in crate::jit) unsafe fn load_bytes(
     engine: &mut CoffEngine,
     bytes: &[u8],
     start: Instant,

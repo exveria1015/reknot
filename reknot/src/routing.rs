@@ -198,9 +198,27 @@ impl PreparedHandler {
     /// Physical COFF identity without retaining or reacquiring code.
     #[cfg(feature = "jit")]
     pub fn coff_image_id(&self) -> Option<crate::jit::CoffImageId> {
+        if cfg!(windows) {
+            self.jit_image_id()
+        } else {
+            None
+        }
+    }
+    /// Physical ELF identity, without retaining code.
+    #[cfg(feature = "jit")]
+    pub fn elf_image_id(&self) -> Option<crate::jit::JitImageId> {
+        if cfg!(target_os = "linux") {
+            self.jit_image_id()
+        } else {
+            None
+        }
+    }
+    /// Physical identity of the native Rust JIT backend, without retaining code.
+    #[cfg(feature = "jit")]
+    pub fn jit_image_id(&self) -> Option<crate::jit::JitImageId> {
         self.image
             .as_ref()
-            .and_then(|g| g.code.coff.as_ref())
+            .and_then(|g| g.code.jit.as_ref())
             .map(|c| c.id)
     }
     /// Native artifact identity without extending its lifetime. Static APIs have none.
@@ -661,10 +679,28 @@ impl RequestRouter {
     /// Active physical COFF identity; unrelated to this router's generation counter.
     #[cfg(feature = "jit")]
     pub fn coff_image_id(&self) -> Option<crate::jit::CoffImageId> {
+        if cfg!(windows) {
+            self.jit_image_id()
+        } else {
+            None
+        }
+    }
+    /// Physical ELF identity, without retaining code.
+    #[cfg(feature = "jit")]
+    pub fn elf_image_id(&self) -> Option<crate::jit::JitImageId> {
+        if cfg!(target_os = "linux") {
+            self.jit_image_id()
+        } else {
+            None
+        }
+    }
+    /// Physical identity of the native Rust JIT backend, without retaining code.
+    #[cfg(feature = "jit")]
+    pub fn jit_image_id(&self) -> Option<crate::jit::JitImageId> {
         self.active
             .image
             .as_ref()
-            .and_then(|g| g.code.coff.as_ref())
+            .and_then(|g| g.code.jit.as_ref())
             .map(|c| c.id)
     }
     /// Native artifact identity without extending its lifetime. Static APIs have none.
@@ -706,7 +742,7 @@ impl RequestRouter {
         let generation = self.retired.iter().find(|g| {
             g.image
                 .as_ref()
-                .and_then(|owner| owner.code.coff.as_ref())
+                .and_then(|owner| owner.code.jit.as_ref())
                 .is_some_and(|c| c.id == image)
         });
         generation.map_or(0, |g| self.cancel_retired_generation(g.id))

@@ -20,15 +20,18 @@ native reload and static linking. Default features enable `native` loading and
 and static hosts can use `default-features = false`; add `features = ["typed"]`
 when using the typed facade.
 
-The optional `jit` feature adds experimental Windows x64 COFF loaders and owned
-`LoadedHandler` routing. `jit-dev` adds layered source builds and watching without
+The optional `jit` feature adds experimental Windows x64 COFF and Linux x86_64 GNU
+ELF object loaders with owned `LoadedHandler` routing. The Linux `ElfEngine` needs
+no LLVM bridge and supports checked identity and Managed collection; see the
+[Linux ELF guide](https://github.com/exveria1015/reknot/blob/main/docs/ELF_JIT.md).
+`jit-dev` adds Windows COFF and Linux ELF layered source builds and watching without
 requiring `native` or `typed`. The Rust backend needs a compiler-matched resident
 std/support foundation; the LLVM backend needs a separately built bridge.
-KeepLoaded is the default. Checked Managed COFF requires an additional unsafe
+KeepLoaded is the default. Checked Managed loading requires an additional unsafe
 lifetime contract and owner-thread collection. See
 [code ownership](https://github.com/exveria1015/reknot/blob/main/docs/JIT_CODE_OWNERSHIP.md)
 and [layered development](https://github.com/exveria1015/reknot/blob/main/docs/LAYERED_DEVELOPMENT.md).
-The repository's PowerShell builders and LLVM bridge are not included in this crate archive.
+The repository's PowerShell/Python builders and LLVM bridge are not included in this crate archive.
 
 Native loading is unsafe and assumes trusted SDK-compatible code. Keep host and
 logic on the same SDK version. Tasks and resource registries remain on their

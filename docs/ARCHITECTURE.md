@@ -69,8 +69,8 @@ Hosts that can establish these conditions may use `unsafe reclaim_native_image`.
 The SDK rechecks retirement, owned references and host-initiated call returns. External Waker returns, TLS and dependencies remain the host's responsibility.
 See [DLL lifetime](UNLOAD_SAFETY.md) for the procedure and retention reasons.
 
-The optional Windows COFF backend uses `LoadedHandler` to carry the same code
-ownership into the Router. Checked `Managed` COFF loads additionally permit
+The optional Windows COFF and Linux ELF backends use `LoadedHandler` to carry
+the same code ownership into the Router. Checked `Managed` COFF/ELF loads permit
 owner-thread collection under an explicit lifetime contract and live image/page
 limits. They bypass the cumulative attempt budget; KeepLoaded paths retain it.
 See [layered development and reclamation](LAYERED_DEVELOPMENT.md).

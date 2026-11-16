@@ -1,4 +1,4 @@
-name: Experimental COFF JIT
+name: Experimental object JIT
 
 on:
   push:
@@ -8,6 +8,7 @@ on:
       - 'reknot_macros/**'
       - 'native/jit/**'
       - 'scripts/*jit*.ps1'
+      - 'scripts/*elf*.py'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - '.github/workflows/jit.yml'
@@ -18,11 +19,30 @@ on:
       - 'reknot_macros/**'
       - 'native/jit/**'
       - 'scripts/*jit*.ps1'
+      - 'scripts/*elf*.py'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - '.github/workflows/jit.yml'
 
 jobs:
+  linux-rust-elf:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Rust
+        run: |
+          rustup update stable --no-self-update
+          rustup default stable
+          rustup component add clippy
+      - name: ELF inspection and relocation checks
+        run: cargo test -p reknot --no-default-features --features jit-dev --lib --locked
+      - name: Actual ELF loading, sealed identity, Managed collection and source watching
+        run: cargo test -p reknot --no-default-features --features jit-dev --lib real_elf --locked -- --ignored --nocapture --test-threads=1
+      - name: Linux loader lints and API documentation tests
+        run: |
+          cargo clippy -p reknot --no-default-features --features jit-dev --all-targets --locked -- -D warnings
+          cargo test -p reknot --no-default-features --features jit-dev --doc --locked
   windows-rust-coff:
     runs-on: windows-latest
     timeout-minutes: 20

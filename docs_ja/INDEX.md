@@ -35,13 +35,14 @@
 ## 開発を続ける
 
 - [開発時の運用](DEVELOPMENT.md) — ソース監視、ビルドと切り替え、失敗からの復旧、上限の観測。
-- [二層COFF開発](LAYERED_DEVELOPMENT.md) — バックグラウンドでのビルド、土台変更への対応、管理対象コードの回収。
+- [二層COFF/ELF開発](LAYERED_DEVELOPMENT.md) — バックグラウンドでのビルド、土台変更への対応、管理対象コードの回収。
 - [トラブルシューティング](TROUBLESHOOTING.md) — 症状とエラー別の確認点。
 - [保持量の観測とコピーの掃除](RETENTION_AND_CLEANUP.md) — DLL の保持状況、キャッシュセッション、終了後のファイル削除。
 - [互換性と対象範囲](COMPATIBILITY.md) — 必要環境、SDK・ABI の条件、アプリケーションが担うこと。
 
 ## API と内部設計を調べる
 
+- [Linux ELF JIT](ELF_JIT.md) — オブジェクトの直接ロード、基盤の同一性検証、Managed回収、Linuxのソース監視。
 - [コードの所有権とCOFF/JITLink](JIT_CODE_OWNERSHIP.md) — 所有者付きハンドラー、safeなルーティング、JITの対応範囲と実機検証。
 - [API リファレンス](API_REFERENCE.md) — API の役割、型付き呼び出しの制約、ビルド構成、ABI。
 - [設計と要件](ARCHITECTURE.md) — 所有の分担、更新の境界、状態と失敗の扱い。

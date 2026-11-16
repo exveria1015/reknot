@@ -266,7 +266,7 @@ Checkpoint は ServiceKey スキーマと所有 Vec<u8> です。
 RouterOptions の既定は共有 GenerationBudget の累積ロード32枠、チェックポイント1 MiB。
 ネイティブ枠はロード前に予約し、ファイル不存在・検査失敗・破棄候補も返却しません。
 Router 再作成時も同じ予算を共有でき、used()・limit() で確認します。プロセス全体のメモリ上限ではありません。
-Managed COFFの `LoadedHandler` はこの累積枠を消費せず、実保持数・ページ量で制限します。
+Managed COFF/ELFの `LoadedHandler` はこの累積枠を消費せず、実保持数・ページ量で制限します。
 native、LLVM、static/customの既存の計上は維持します。
 
 ## ビルド構成
@@ -276,6 +276,13 @@ native、LLVM、static/customの既存の計上は維持します。
 `native` だけを指定した構成には監視機能を含めません。`reknot-cache` は `native` が必要です。
 
 任意選択の `jit` featureは、`native` と独立して `reknot::jit` を提供します。
+Linux x86_64 GNUの`ElfEngine::open_layered(std_so, support_so, ElfLimits)`はLLVMなしで
+ELF64をロードし、イメージ・セッションの容量を制限してプロセス終了まで保持します。
+[Linux ELFガイド](ELF_JIT.md)を参照してください。`LayeredArtifact` / `LayeredEngine`は
+Linuxのschema 3、sealによる基盤の固定、明示選択のManaged回収にも対応します。
+`jit-dev`はLinuxではPythonビルダーを使います。OS共通の入口は`LayeredLimits`、
+`JitPolicy`、`jit_image_id`、`jit_retention_snapshot`、`collect_retired_jit`です。
+`collect_retired_elf`でELFを明示した回収もできます。
 実験的なWindows x64の `JitEngine` には別途ビルドしたLLVMブリッジが必要です。
 [対応範囲とビルド手順](JIT_CODE_OWNERSHIP.md)を参照してください。
 `JitEngine::open_with_runtime` は一致する動的std、emulated TLS、世代内で捕捉するpanicに対応します。
@@ -289,19 +296,20 @@ KeepLoaded方針は共通です。コンパイラーとsupportの一致はunsafe
 Rust COFF/bigobjローダーで同じ二層の所有権契約を提供し、LLVMを必要としません。
 `CoffLimits` はBSSやページ余白を含む実割り当ての予算も指定します。
 未対応の入力は実行前に拒否し、公開したコードは保持します。
-`LayeredArtifact::read(manifest)` は二層ビルダーのschema 2からサイズ・ハッシュを検証したCOFFを
-取得します。`unsafe into_trusted()` でコードと生成元への信頼を明示した後は、safeな
-`LayeredEngine::open(&trusted, CoffLimits)` と `load(trusted)` がDLLの土台を検証・固定し、
-不一致のlogicを拒否します。検証済み土台はプロセスごとに一つで、両DLLのファイルを終了まで固定します。
+`LayeredArtifact::read(manifest)` はschema 2のCOFFまたはschema 3のELFを読み、
+サイズ・ハッシュを検証してバイト列を保持します。`unsafe into_trusted()` でコードと生成元への
+信頼を明示した後は、safeな `LayeredEngine::open(&trusted, LayeredLimits)` と `load(trusted)` が
+常駐基盤を検証して不一致のlogicを拒否します。検証済み基盤はプロセスごとに一つです。
+Windowsでは両DLLのファイルを固定し、Linuxではseal済みstd/supportとファイル記述子を終了まで保持します。
 任意のコードの安全性やmanifestの正しさを証明する検査ではありません。残る信頼契約と、
 ビルドで土台を再利用する `-FoundationManifest` は上記ガイドを参照してください。
 任意選択の `jit-dev` は `jit::development::LayeredDevSession` / `LayeredDevOptions` を提供します。
 `unsafe start` で将来の編集を含む信頼契約を受け入れ、`poll_update` で非同期ビルド結果を進めます。
 `unsafe TrustedLayeredArtifact::into_managed()` は追加の管理寿命契約を受け入れる操作で、
-`LayeredEngine::load_managed` に渡せます。`collect_retired_coff` は所有スレッドのsafeな明示回収、
-`coff_retention_snapshot` / `LoadedHandler::coff_image_id` は所有権を持たない診断です。
+`LayeredEngine::load_managed` に渡せます。`collect_retired_jit` は所有スレッドのsafeな明示回収、
+`jit_retention_snapshot` / `LoadedHandler::jit_image_id` は所有権を持たない診断です。
 開発セッションへの追加契約は `unsafe start_managed` で指定します。
-`CoffPolicy::Managed` は累積ロード・受付枠を消費せず、KeepLoadedの使用数は
+`JitPolicy::Managed` は累積ロード・受付枠を消費せず、KeepLoadedの使用数は
 `keep_loaded_attempts()` で別に取得します。`ManagedReloadOptions` の既定は実保持2世代と
 `ManagedPressure::Wait` です。`CancelOldest` は容量で更新が止まった場合に最古の退役rootのキャンセルを要求します。
 Managedの `poll_update` は自身のイメージだけを回収対象とし、容量待ちのビルド済み候補は一つ保持します。
@@ -315,7 +323,7 @@ Managedの `poll_update` は自身のイメージだけを回収対象とし、�
 | 構成 | 依存の指定 | 含まれる機能 |
 | --- | --- | --- |
 | 開発ホスト | 既定 feature | DLL ロード・保持量観測・コピー掃除、ビルド・監視補助 |
-| 二層COFF開発ホスト | `default-features = false, features = ["jit-dev"]` | 非同期ビルド・監視・検証付きロード・明示選択した管理回収 |
+| 二層COFF/ELF開発ホスト | `default-features = false, features = ["jit-dev"]` | 非同期ビルド・監視・検証付きロード・明示選択した管理回収 |
 | 外部で成果物をビルドするホスト | `default-features = false, features = ["native"]` | DLL ロード・保持量観測・コピー掃除 |
 | ロジック crate・静的ホスト | `default-features = false` | サービス・タスク・ルーティング・ハンドラー生成 |
 | 型付きロジック・静的ホスト | `default-features = false, features = ["typed"]` | 型付き入出力・モジュール契約。ネイティブ依存なし |

@@ -1,11 +1,17 @@
-# Layered development and managed COFF reclamation
+# Layered development and managed object reclamation
 
 English | [日本語](../docs_ja/LAYERED_DEVELOPMENT.md)
 
-This experimental path requires Windows x64 MSVC, PowerShell 7 and a compiler-matched
+On Windows, this experimental path uses x64 MSVC, PowerShell 7 and a compiler-matched
 resident std/support pair. Enable `jit-dev` on the host; it includes `jit` and `notify`
 without requiring `native` or `typed`. Keep the logic/support dependency configuration
 described in [code ownership](JIT_CODE_OWNERSHIP.md). Handler ABI 5 is unchanged.
+
+Linux x86_64 GNU uses the same session/ownership API with Python 3.9+ and
+`scripts/build-layered-elf.py` in place of the PowerShell builder. Use the Cargo
+support target name without `lib`/`.so`. Checked foundation identity, Managed
+collection and all admission states below are shared; OS-specific details and
+Linux build commands are in the [ELF guide](ELF_JIT.md).
 
 ## Starting and driving development
 
@@ -14,9 +20,14 @@ use reknot::HostResources;
 use reknot::jit::development::{LayeredDevOptions, LayeredDevSession};
 
 # fn example() -> Result<(), String> {
+let builder = if cfg!(target_os = "linux") {
+    "reknot/scripts/build-layered-elf.py"
+} else {
+    "reknot/scripts/build-layered-jit.ps1"
+};
 let mut options = LayeredDevOptions::new(
     "project/Cargo.toml", "my_logic", "my_support",
-    "reknot/scripts/build-layered-jit.ps1", "project/target/layered-cache",
+    builder, "project/target/layered-cache",
 );
 options.toolchain = "stable".into();
 let resources = HostResources::new(); // Register the application's services here.
@@ -74,7 +85,7 @@ configuration and declared foundation contents. It selects a reuse attempt; actu
 full recheck of the same revision, using structured results rather than stderr matching.
 Changed foundation identity reports `RestartRequired` before logic entry. The old
 Router continues; this does not restart the process or transfer its connections.
-Restoring source text does not necessarily reproduce identical DLL bytes. Only an
+Restoring source text does not necessarily reproduce identical library bytes. Only an
 actual matching identity returns to ordinary reload.
 
 Cargo runs from the manifest directory with a captured child environment. Use
@@ -83,8 +94,8 @@ changes explicitly. `retry()` requests another full check without recreating the
 
 The cache contains a reused `cargo/` target, immutable `foundation/` and `objects/`
 copies, and unique `sessions/<id>/jobs/<id>/` outputs. A target writer lock serializes
-cooperating builders; each worker holds its session lease through completion. Schema 2
-stays unchanged. Version-one `build-result.json` binds the producer result to the job;
+cooperating builders; each worker holds its session lease through completion.
+Windows uses schema 2; Linux uses schema 3. Version-one `build-result.json` binds the producer result to the job;
 `build-receipt.json` also records the captured manifest hash, foundation/object identity
 and timings. Receipts grant neither native-code trust nor managed lifetime permission.
 
@@ -100,7 +111,8 @@ The worker retains the lease until it actually exits.
 
 ## KeepLoaded and Managed
 
-`CoffPolicy` distinguishes two lifetimes:
+`JitPolicy` distinguishes two lifetimes. The shared `Jit*` names and
+`LayeredLimits` are compatible aliases of the existing `Coff*` types:
 
 | Policy | Retired logic | Capacity |
 | --- | --- | --- |
@@ -110,7 +122,7 @@ The worker retains the lease until it actually exits.
 Managed loads do not consume either the engine's or Router's cumulative 32-attempt
 allowance. `load_attempts()` counts all attempts for diagnostics;
 `keep_loaded_attempts()` counts only the attempts charged against
-`CoffLimits::load.max_generations`. Native DLL, raw COFF, LLVM and static/custom
+`LayeredLimits::load.max_generations`. Native libraries, raw COFF/ELF, LLVM and static/custom
 Router paths retain their existing accounting. A Managed policy does not preserve
 application state across process exit, and does not imply that every image can be freed.
 
@@ -120,13 +132,14 @@ Normal `LayeredEngine::load` and `LayeredDevSession::start` retain KeepLoaded be
 To permit reclamation, explicitly accept an additional unsafe contract **before entry**:
 
 ```rust,no_run
-use reknot::jit::{CoffLimits, LayeredArtifact, LayeredEngine};
+use reknot::jit::{LayeredLimits, LayeredArtifact, LayeredEngine};
 # fn example() -> Result<(), Box<dyn std::error::Error>> {
-let trusted = unsafe { LayeredArtifact::read("logic.obj.json")?.into_trusted() };
-let mut engine = LayeredEngine::open(&trusted, CoffLimits::default())?;
+let manifest = if cfg!(target_os = "linux") { "logic.o.json" } else { "logic.obj.json" };
+let trusted = unsafe { LayeredArtifact::read(manifest)?.into_trusted() };
+let mut engine = LayeredEngine::open(&trusted, LayeredLimits::default())?;
 let managed = unsafe { trusted.into_managed() }; // Additional managed-v1 contract.
 let handler = engine.load_managed(managed)?;
-let image_id = handler.coff_image_id(); // Diagnostic only; cannot reacquire code.
+let image_id = handler.jit_image_id(); // Diagnostic only; cannot reacquire code.
 # let _ = image_id; Ok(()) }
 ```
 
@@ -154,7 +167,7 @@ version one. Manifest fields cannot promote a trusted artifact to managed status
 The live count includes the active image, loaded candidates and retained images published
 by this session. At least two slots are required so the current handler can serve while
 a replacement is validated. Other controllers still contribute to the owner-thread
-image/byte limits in `CoffLimits`.
+image/byte limits in `LayeredLimits`.
 
 ```rust,no_run
 use reknot::jit::development::{LayeredDevOptions, LayeredDevSession, ManagedPressure};
@@ -211,30 +224,34 @@ recent `reclamation` report. IDs and counts are diagnostic and grant no code own
 ## Explicit collection and diagnostics
 
 Progress requests and cancellation/activities, drop completed handles, then call
-`router.release_retired_generations()`. Call `jit::collect_retired_coff(options)` on the
+`router.release_retired_generations()`. Call `jit::collect_retired_jit(options)` on the
 loading thread. It can also run after the controller is dropped. It never forces task
 termination and never executes arbitrary logic while holding the image registry.
 
-Each physical load gets a unique `CoffImageId`. `coff_retention_snapshot()` reports policy,
+Each physical load gets a unique `JitImageId`. `jit_retention_snapshot()` reports policy,
 state, allocated page bytes, references, executing calls, locals, activities and failure
-reasons. These values confer no ownership. The native retention API is unchanged.
+reasons. These values confer no ownership. `collect_retired_jit` selects the native Rust
+backend; `collect_retired_coff` and `collect_retired_elf` remain available for
+explicit platform selection. The native-library retention API is unchanged.
 LoadedHandler, PreparedHandler and RequestRouter expose the same diagnostic
-`coff_image_id()`. Failed pre-execution rollback also stays charged; its record has
+`jit_image_id()`. Failed pre-execution rollback also stays charged; its record has
 no foundation identity and an empty object hash because publication never completed.
 
 Collection rechecks retirement, activity/local completion, failures and returned calls,
 then uses exclusive Arc ownership to seal the image against new leases. Only owner-thread
-maintenance unregisters its exact unwind table and calls `VirtualFree(base, 0, MEM_RELEASE)`.
-Failure pins the allocation without automatic retry; successful release refunds the live
+maintenance releases the image: Windows removes its unwind table and calls
+`VirtualFree(base, 0, MEM_RELEASE)`; Linux removes its libgcc frame registration
+and calls `munmap`. Failure pins the allocation without automatic retry; successful release refunds the live
 image budget. Last-lease Drop and owner-thread teardown never release machine code.
 Thread teardown conservatively leaks any unreclaimed image/table. std/support and their
-file pins remain resident even when every logic image is released.
+Windows file pins or Linux sealed file descriptors remain resident even when
+every logic image is released.
 
-`CoffLimits` defaults are 32 cumulative **KeepLoaded** attempts, 32 MiB per object, 64 MiB per allocation,
+`LayeredLimits` defaults are 32 cumulative **KeepLoaded** attempts, 32 MiB per object, 64 MiB per allocation,
 and owner-thread totals of 256 retained images / 256 MiB of allocated image pages across
 controllers. KeepLoaded, failed releases and pinned images count toward those totals;
 they are not a process-wide memory bound across owner threads. Router attempts have a
-separate default of 32 (`max_router_generations` in development options); Managed COFF
+separate default of 32 (`max_router_generations` in development options); Managed COFF/ELF
 handlers bypass this allowance. Neither KeepLoaded attempt budget is refunded.
 The live image/page limits apply to both policies. No released-generation detail history is accumulated: snapshots keep
 live/retained records and cumulative successful release totals.

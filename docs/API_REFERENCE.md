@@ -264,7 +264,7 @@ A `Checkpoint` contains a `ServiceKey` schema and owned `Vec<u8>` bytes.
 `RouterOptions` defaults to a shared `GenerationBudget` of 32 cumulative load attempts and a 1 MiB checkpoint limit.
 Native attempts are reserved before loading and never refunded, including missing files, failed checks and abandoned candidates.
 Share the budget across router recreation and inspect it through `used()` / `limit()`. It is not a process-wide memory bound.
-Managed COFF `LoadedHandler`s do not consume this cumulative allowance; live image/page
+Managed COFF/ELF `LoadedHandler`s do not consume this cumulative allowance; live image/page
 limits apply instead. Native, LLVM and static/custom entry points keep their existing accounting.
 
 ## Build configurations
@@ -274,6 +274,13 @@ Defaults enable `typed`, `native` and `dev-tools`. `typed` provides Serde JSON h
 A `native`-only configuration does not include watching. `reknot-cache` requires `native`.
 
 The opt-in `jit` feature provides `reknot::jit` independently of `native`. Its
+Linux x86_64 GNU `ElfEngine::open_layered(std_so, support_so, ElfLimits)` loads
+ELF64 objects without LLVM, with process residency and image/session byte limits;
+see [Linux ELF loading](ELF_JIT.md). `LayeredArtifact` / `LayeredEngine` also support
+Linux schema-3 manifests, sealed foundation identity and opt-in Managed collection.
+`jit-dev` uses the Python ELF builder on Linux. `LayeredLimits`, `JitPolicy`,
+`jit_image_id`, `jit_retention_snapshot` and `collect_retired_jit` provide common
+COFF/ELF entry points; `collect_retired_elf` selects ELF explicitly. The
 experimental Windows x64 `JitEngine` needs a separately built LLVM bridge; see
 [the supported subset and build instructions](JIT_CODE_OWNERSHIP.md).
 `JitEngine::open_with_runtime` adds matching dynamic std, emulated TLS and panic
@@ -287,21 +294,22 @@ identity is the unsafe caller's responsibility; see the two-layer guide above.
 layered ownership contract using a Rust COFF/bigobj loader on Windows x64 MSVC,
 without LLVM. `CoffLimits` adds a committed-image budget, including BSS and padding.
 Unsupported inputs fail before execution; published code stays loaded.
-`LayeredArtifact::read(manifest)` captures size/hash-checked COFF bytes from the
-schema-2 layered builder. `unsafe into_trusted()` accepts native-code and producer
-trust; then `LayeredEngine::open(&trusted, CoffLimits)` and `load(trusted)` safely
-verify/pin the DLL foundation and reject mismatched logic. One verified foundation
-is allowed per process, and both DLL files remain pinned until exit. These checks
+`LayeredArtifact::read(manifest)` captures size/hash-checked COFF bytes from a
+schema-2 manifest or ELF bytes from schema 3. `unsafe into_trusted()` accepts
+native-code and producer trust; then `LayeredEngine::open(&trusted, LayeredLimits)`
+and `load(trusted)` verify the resident foundation and reject mismatched logic.
+One verified foundation is allowed per process. Windows pins both DLL files;
+Linux keeps sealed std/support snapshots and their file descriptors until exit. These checks
 do not prove arbitrary code safe or a manifest truthful. See the guide for the
 remaining trust contract and the `-FoundationManifest` build reuse option.
 The optional `jit-dev` feature adds `jit::development::LayeredDevSession` and
 `LayeredDevOptions`. `unsafe start` accepts future-code trust; `poll_update` drives
 nonblocking build results and preserves admission on failure or foundation change.
 `unsafe TrustedLayeredArtifact::into_managed()` accepts an additional lifetime
-contract for `LayeredEngine::load_managed`. `collect_retired_coff` is safe, explicit
-owner-thread maintenance; `coff_retention_snapshot` and `LoadedHandler::coff_image_id`
+contract for `LayeredEngine::load_managed`. `collect_retired_jit` is safe, explicit
+owner-thread maintenance; `jit_retention_snapshot` and `LoadedHandler::jit_image_id`
 provide diagnostics without ownership. `unsafe start_managed` extends that contract
-to a development session. `CoffPolicy::Managed` bypasses cumulative load/admission limits;
+to a development session. `JitPolicy::Managed` bypasses cumulative load/admission limits;
 `keep_loaded_attempts()` exposes the separately charged KeepLoaded count.
 `ManagedReloadOptions` defaults to two live generations with `ManagedPressure::Wait`;
 `CancelOldest` requests retired-root cancellation when capacity blocks an update.
@@ -317,7 +325,7 @@ Use `default-features = false` in logic crates and statically linked hosts.
 | Configuration | Dependency options | Included features |
 | --- | --- | --- |
 | Development host | Defaults | DLL loading, retention diagnostics, copy cleanup, build/watch helpers |
-| Layered COFF development host | `default-features = false, features = ["jit-dev"]` | Background layered builder, watching, checked loading and opt-in managed collection |
+| Layered COFF/ELF development host | `default-features = false, features = ["jit-dev"]` | Background layered builder, watching, checked loading and opt-in managed collection |
 | Host with an external builder | `default-features = false, features = ["native"]` | DLL loading, retention diagnostics and copy cleanup |
 | Logic crate or static host | `default-features = false` | Services, tasks, routing and handler generation |
 | Typed logic or static host | `default-features = false, features = ["typed"]` | Typed input/output and module contracts, without native dependencies |

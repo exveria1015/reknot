@@ -9,7 +9,7 @@ pub(crate) struct CodeLease {
     _code: Arc<dyn Send + Sync>,
     executions: Arc<AtomicUsize>,
     #[cfg(feature = "jit")]
-    pub(crate) coff: Option<Arc<crate::jit::CoffTracking>>,
+    pub(crate) jit: Option<Arc<crate::jit::CoffTracking>>,
     #[cfg(feature = "native")]
     native_id: Option<crate::ArtifactId>,
 }
@@ -20,7 +20,7 @@ impl CodeLease {
             _code: code,
             executions,
             #[cfg(feature = "jit")]
-            coff: None,
+            jit: None,
             #[cfg(feature = "native")]
             native_id: None,
         }
@@ -30,8 +30,8 @@ impl CodeLease {
         not(all(windows, target_arch = "x86_64", target_env = "msvc")),
         allow(dead_code)
     )]
-    pub(crate) fn with_coff(mut self, tracking: Arc<crate::jit::CoffTracking>) -> Self {
-        self.coff = Some(tracking);
+    pub(crate) fn with_jit(mut self, tracking: Arc<crate::jit::CoffTracking>) -> Self {
+        self.jit = Some(tracking);
         self
     }
     #[cfg(feature = "native")]
@@ -77,7 +77,7 @@ impl GenerationOwner {
     }
     pub(crate) fn prepared(&self) {
         #[cfg(feature = "jit")]
-        if let Some(c) = &self.code.coff {
+        if let Some(c) = &self.code.jit {
             c.state(crate::jit::CoffImageState::Prepared);
         }
         #[cfg(feature = "native")]
@@ -90,7 +90,7 @@ impl GenerationOwner {
     }
     pub(crate) fn activate(&self) {
         #[cfg(feature = "jit")]
-        if let Some(c) = &self.code.coff {
+        if let Some(c) = &self.code.jit {
             c.state(crate::jit::CoffImageState::Active);
         }
         #[cfg(feature = "native")]
@@ -103,7 +103,7 @@ impl GenerationOwner {
     }
     pub(crate) fn retire(&self) {
         #[cfg(feature = "jit")]
-        if let Some(c) = &self.code.coff {
+        if let Some(c) = &self.code.jit {
             c.state(crate::jit::CoffImageState::Retired);
         }
         #[cfg(feature = "native")]
@@ -122,7 +122,7 @@ impl GenerationOwner {
 impl Drop for GenerationOwner {
     fn drop(&mut self) {
         #[cfg(feature = "jit")]
-        if let Some(c) = &self.code.coff {
+        if let Some(c) = &self.code.jit {
             c.state(crate::jit::CoffImageState::Retired);
         }
         #[cfg(feature = "native")]

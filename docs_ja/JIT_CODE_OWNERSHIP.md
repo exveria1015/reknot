@@ -2,6 +2,12 @@
 
 [English](../docs/JIT_CODE_OWNERSHIP.md) | 日本語
 
+Linux x86_64 GNUにはRust製の[ELFオブジェクトバックエンド](ELF_JIT.md)もあります。
+`LoadedHandler`の所有権、検証付き`LayeredEngine`、Managed契約、`LayeredDevSession`を
+共有します。Linuxではseal済みmemfdで基盤を固定し、libgccの登録解除とmunmapで回収します。
+以下のCOFF用コマンドやWindows APIはOS固有です。PythonビルダーとLinuxでの詳細は
+ELFガイドを参照してください。
+
 ## 所有権の境界
 
 `LoadedHandler` は検証した関数表とコードの所有者を一体で保持します。
@@ -24,7 +30,7 @@ ABI検証だけで任意の機械語の正しさは保証できません。`Load
 ## 保持と上限
 
 既定では、リンクに成功したJITの機械語・データ・依存先・登録したアンワインド表をプロセス終了まで保持します。
-Rust COFFでは追加契約を受け入れた世代に限り、[管理回収](LAYERED_DEVELOPMENT.md)を選べます。
+Rust COFF/ELFでは追加契約を受け入れた世代に限り、[管理回収](LAYERED_DEVELOPMENT.md)を選べます。
 ルーター、エンジンの操作ハンドル、拒否した候補、最後のWakerをDropしてもJITコードを自動回収しません。
 `mem::forget` により資源が残ることはありますが、安全性を全デストラクターの実行に依存させません。
 この保持方針は、任意のRustコードを安全にアンロードできるという保証ではありません。
@@ -37,7 +43,7 @@ Rust COFFでは追加契約を受け入れた世代に限り、[管理回収](LA
 一つのリロードセッションでは同じエンジンを再利用してください。新しいエンジンは別の予算を持つため、
 プロセス全体のメモリー上限ではありません。入力サイズはBSS、ページの余白、LLVM管理領域の上限にもなりません。
 ルーターの既存の世代予算は、別途、候補の受け入れ試行数を制限します。
-この累積制限はLLVMとKeepLoaded COFFに適用します。後述の検証付きManaged COFFは
+この累積制限はLLVMとKeepLoaded COFF/ELFに適用します。検証付きManagedは
 実保持数・ページ量で制限し、エンジンとRouterの累積枠を消費しません。
 
 外部コールバックは最後のWakerを解放した後にも、旧コード上の命令を実行し得ます。
@@ -46,7 +52,8 @@ Rust COFFでは追加契約を受け入れた世代に限り、[管理回収](LA
 
 ## JITの対応範囲
 
-任意選択の `jit` featureは、後述のRust製 `CoffEngine` とLLVM製 `JitEngine` を提供します。
+任意選択の `jit` featureは、後述のRust製 `CoffEngine`、[ELFガイド](ELF_JIT.md)の
+Rust製 `ElfEngine`、LLVM製 `JitEngine` を提供します。
 後者は別途ビルドしたLLVM 23.1.0のブリッジをWindows x86-64で使います。
 ORCのObjectLinkingLayer / JITLinkを明示的に選び、ハンドラーの入口を公開する前に
 COFFの.pdataをRtlAddFunctionTableへ登録します。各イメージには別のJITDylibを割り当て、
@@ -183,9 +190,12 @@ entry・ABIの拒否時はManagedでも回収不能として保持します。�
 ## 土台と成果物の同一性を検証するAPI
 
 通常の二層リロードには、パスを直接渡す低水準APIの代わりに `LayeredArtifact` と `LayeredEngine` を
-使えます。safeな `LayeredArtifact::read` はサイズ制限付きschema 2 manifestを読み、対応する構成か
-検査してから、サイズとSHA-256が一致するCOFFのバイト列を保持します。後からパスを差し替えても、
+使えます。safeな `LayeredArtifact::read` はサイズ制限付きschema 2のCOFFまたはschema 3のELF manifestを読み、
+対応する構成か検査してから、サイズとSHA-256が一致するオブジェクトのバイト列を保持します。後からパスを差し替えても、
 この取得済みオブジェクトは変わりません。schema 1は検証済みと見なさず拒否します。
+
+以下のコマンドとファイル固定の説明はWindows COFF向けです。Linuxのseal済みスナップショットと
+Pythonビルダーは[ELFガイド](ELF_JIT.md)を参照してください。
 
 `unsafe into_trusted()` で、ネイティブコードと生成元への信頼を明示します。manifestには実際の
 コンパイル時の土台が正しく記録され、コード・DLL初期化処理・依存先がcallbackと寿命の契約を満たす

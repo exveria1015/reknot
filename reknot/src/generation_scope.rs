@@ -116,7 +116,7 @@ impl Drop for GenerationScope {
 }
 fn registered(lease: &Option<CodeLease>) {
     #[cfg(feature = "jit")]
-    if let Some(c) = lease.as_ref().and_then(|l| l.coff.as_ref()) {
+    if let Some(c) = lease.as_ref().and_then(|l| l.jit.as_ref()) {
         c.local(1);
     }
     #[cfg(feature = "native")]
@@ -129,7 +129,7 @@ fn registered(lease: &Option<CodeLease>) {
 }
 fn destroyed(lease: &Option<CodeLease>) {
     #[cfg(feature = "jit")]
-    if let Some(c) = lease.as_ref().and_then(|l| l.coff.as_ref()) {
+    if let Some(c) = lease.as_ref().and_then(|l| l.jit.as_ref()) {
         c.local(-1);
     }
     #[cfg(feature = "native")]
@@ -142,7 +142,7 @@ fn destroyed(lease: &Option<CodeLease>) {
 }
 fn failed(lease: &Option<CodeLease>) {
     #[cfg(feature = "jit")]
-    if let Some(c) = lease.as_ref().and_then(|l| l.coff.as_ref()) {
+    if let Some(c) = lease.as_ref().and_then(|l| l.jit.as_ref()) {
         c.pin(crate::jit::CoffRetentionReason::LocalCleanupFailed);
     }
     #[cfg(feature = "native")]

@@ -1,7 +1,7 @@
 //! Owner-thread layered development; Cargo and artifact reads run on a host worker.
-use super::coff::retention::collect_selected_coff;
+use super::coff::retention::collect_selected_jit;
 use super::{
-    coff_retention_snapshot, CoffImageId, CoffImageState, CoffLimits, CoffPolicy,
+    jit_retention_snapshot, CoffImageId, CoffImageState, CoffLimits, CoffPolicy,
     CoffReclaimOptions, CoffReclaimReport, CoffRetentionSnapshot, JitError, LayeredArtifact,
     LayeredEngine, TrustedLayeredArtifact,
 };
@@ -65,7 +65,7 @@ impl Default for ManagedReloadOptions {
 pub struct LayeredDevOptions {
     pub manifest_path: PathBuf,
     pub package: String,
-    /// Cargo's dylib target name (without .dll).
+    /// Cargo's dylib target name (without platform prefix/suffix).
     pub support_target: String,
     pub builder: PathBuf,
     pub cache_directory: PathBuf,
@@ -284,7 +284,14 @@ impl LayeredDevSession {
         resources: HostResources,
         managed: bool,
     ) -> Result<Self, String> {
-        if !cfg!(all(windows, target_arch = "x86_64", target_env = "msvc")) {
+        if !cfg!(any(
+            all(windows, target_arch = "x86_64", target_env = "msvc"),
+            all(
+                target_os = "linux",
+                target_arch = "x86_64",
+                target_env = "gnu"
+            )
+        )) {
             return Err(JitError::UnsupportedTarget.to_string());
         }
         options.manifest_path = normalize(
@@ -740,9 +747,9 @@ impl LayeredDevSession {
                     format!("Router KeepLoaded limit reached ({}); restart required to continue updating", budget.used())));
             }
         }
-        let snapshot = coff_retention_snapshot();
+        let snapshot = jit_retention_snapshot();
         self.prune_images(&snapshot);
-        let active = self.router.as_ref().and_then(RequestRouter::coff_image_id);
+        let active = self.router.as_ref().and_then(RequestRouter::jit_image_id);
         let oldest = self
             .live_images
             .iter()
@@ -786,7 +793,7 @@ impl LayeredDevSession {
             }
             return Some((LayeredDevState::RetentionBlocked {
                 images: snapshot.images.len(), bytes: snapshot.retained_bytes, required_bytes,
-            }, "COFF retention capacity unavailable; current requests continue, KeepLoaded/Pinned images require process restart".into()));
+            }, "JIT retention capacity unavailable; current requests continue, KeepLoaded/Pinned images require process restart".into()));
         }
         None
     }
@@ -829,9 +836,9 @@ impl LayeredDevSession {
         if let Some(router) = &mut self.router {
             router.release_retired_generations();
         }
-        let report = collect_selected_coff(options, &self.live_images);
+        let report = collect_selected_jit(options, &self.live_images);
         self.reclamation = report.clone();
-        self.prune_images(&coff_retention_snapshot());
+        self.prune_images(&jit_retention_snapshot());
         Some(report)
     }
     pub fn shutdown(&mut self) -> Result<(), String> {
@@ -988,7 +995,7 @@ fn discover(
             "--format-version",
             "1",
             "--filter-platform",
-            "x86_64-pc-windows-msvc",
+            super::artifact::native_target(),
             "--manifest-path",
         ])
         .arg(&options.manifest_path);
@@ -1238,11 +1245,25 @@ fn build_artifact(job: Job, plan: &Plan, start: Instant) -> Result<Built, BuildF
      -> Result<(PathBuf, Vec<u8>, LayeredBuildMetrics), BuildFailure> {
         let dir = job.directory.join(suffix);
         fs::create_dir_all(&dir).map_err(|e| failed(e.to_string()))?;
-        let output = dir.join("logic.obj");
+        let output = dir.join(if cfg!(target_os = "linux") {
+            "logic.o"
+        } else {
+            "logic.obj"
+        });
         let receipt = dir.join("build-result.json");
-        let mut c = command("pwsh", &job.environment, &job.options.manifest_path);
-        c.args(["-NoProfile", "-NonInteractive", "-File"])
-            .arg(&job.options.builder)
+        let mut c = command(
+            if cfg!(target_os = "linux") {
+                "python3"
+            } else {
+                "pwsh"
+            },
+            &job.environment,
+            &job.options.manifest_path,
+        );
+        if !cfg!(target_os = "linux") {
+            c.args(["-NoProfile", "-NonInteractive", "-File"]);
+        }
+        c.arg(&job.options.builder)
             .arg("-ManifestPath")
             .arg(&job.options.manifest_path)
             .arg("-Package")
@@ -1253,8 +1274,14 @@ fn build_artifact(job: Job, plan: &Plan, start: Instant) -> Result<Built, BuildF
             .arg(
                 job.options
                     .cache_directory
-                    .join("cargo/x86_64-pc-windows-msvc/debug")
-                    .join(format!("{}.dll", job.options.support_target)),
+                    .join("cargo")
+                    .join(super::artifact::native_target())
+                    .join("debug")
+                    .join(if cfg!(target_os = "linux") {
+                        format!("lib{}.so", job.options.support_target)
+                    } else {
+                        format!("{}.dll", job.options.support_target)
+                    }),
             )
             .arg("-Output")
             .arg(&output)
@@ -1310,7 +1337,11 @@ fn build_artifact(job: Job, plan: &Plan, start: Instant) -> Result<Built, BuildF
                 message: format!("{}\n{diagnostic}", value["message"]),
             });
         }
-        let manifest = output.with_extension("obj.json");
+        let manifest = output.with_extension(if cfg!(target_os = "linux") {
+            "o.json"
+        } else {
+            "obj.json"
+        });
         let captured = read_limit(&manifest, 256 * 1024).map_err(failed)?;
         if value["manifest_sha256"] != hash(&captured) {
             return Err(BuildFailure {

@@ -163,7 +163,7 @@ impl Entry {
             return Err(ServiceError::CONTRACT_MISMATCH);
         }
         #[cfg(feature = "jit")]
-        if let Some(c) = lease.as_ref().and_then(|l| l.coff.as_ref()) {
+        if let Some(c) = lease.as_ref().and_then(|l| l.jit.as_ref()) {
             c.activity(1);
         }
         Ok(Self {
@@ -199,12 +199,12 @@ impl Drop for Entry {
             let _call = enter(&self.lease);
             unsafe { ((*self.raw.vtable).destroy)(self.raw.data) };
             #[cfg(feature = "jit")]
-            if let Some(c) = self.lease.as_ref().and_then(|l| l.coff.as_ref()) {
+            if let Some(c) = self.lease.as_ref().and_then(|l| l.jit.as_ref()) {
                 c.activity(-1);
             }
         } else {
             #[cfg(feature = "jit")]
-            if let Some(c) = self.lease.as_ref().and_then(|l| l.coff.as_ref()) {
+            if let Some(c) = self.lease.as_ref().and_then(|l| l.jit.as_ref()) {
                 c.pin(crate::jit::CoffRetentionReason::ActivityAbandoned);
             }
             // Abandonment/thread exit cannot asynchronously join. Keep the raw owner

@@ -16,7 +16,8 @@ use the same message API and ownership contracts.
 | Tauri GUI | Platform Tauri prerequisites; WebView2 on Windows; no npm or Tauri CLI |
 | Native core and examples | Windows and Linux CI jobs are configured |
 | Experimental Rust COFF (`jit`) | Windows x64 MSVC; compiler-matched resident std/support DLLs; no LLVM required |
-| Layered development (`jit-dev`) | Rust COFF requirements plus PowerShell 7 and the repository's layered builder |
+| Experimental Rust ELF (`jit`) | Linux x86_64 GNU/glibc; ELF64 ET_REL/PIC objects, resident compiler-matched std/support; no LLVM required; checked identity, opt-in Managed collection and Python 3.9+ `jit-dev` |
+| Layered development (`jit-dev`) | COFF + PowerShell 7 on Windows, or ELF + Python 3.9+ on Linux; repository layered builder |
 | Experimental LLVM COFF (`jit`) | Windows x64, MSVC COFF and a separately built LLVM 23.1.0 bridge; emulated TLS additionally requires nightly Rust |
 | GUI backend | Windows and Linux CI integration without opening a window |
 | GUI interaction | Linux WebView under Xvfb; editor, Drain/Restart and build-error recovery |
@@ -26,7 +27,8 @@ CI configuration describes what is checked, not a guarantee that a particular
 revision has passed. See [testing](TESTING.md) and the
 [workflow](../.github/workflows/ci.yml). Interactive window behavior is checked
 separately using the [GUI guide](TAURI_GUI_LAB.md).
-COFF checks have a separate [Windows workflow](../.github/workflows/jit.yml).
+COFF and ELF checks have a separate [Windows/Linux workflow](../.github/workflows/jit.yml).
+See the [Linux ELF guide](ELF_JIT.md) for its build contract and limitations.
 See [code ownership](JIT_CODE_OWNERSHIP.md) for the accepted object/runtime profiles.
 
 ## API and ABI
@@ -49,7 +51,7 @@ See [build configurations](API_REFERENCE.md#build-configurations) for the settin
 
 ABI metadata checks reject incompatible tables; they do not prove native code
 safety or payload meaning. Native execution requires an `unsafe` trust contract;
-the checked COFF API accepts it through `into_trusted`, then checks identity through
+the checked COFF/ELF API accepts it through `into_trusted`, then checks identity through
 safe `LayeredEngine` methods. Raw native-loading APIs remain `unsafe`. Initialization,
 finalization, callbacks, owned data and code lifetimes must all meet SDK contracts.
 See the [API reference](API_REFERENCE.md) and [breaking changes](../CHANGELOG.md).
@@ -68,7 +70,7 @@ See the [API reference](API_REFERENCE.md) and [breaking changes](../CHANGELOG.md
 - Bound development sessions. Images default to KeepLoaded; failed load attempts
   also consume the shared cumulative budget. Restart the process when exhausted,
   and explicitly clean eligible exited-session files as needed.
-- Managed COFF is an additional opt-in lifetime contract. It uses live image/page
+- Managed COFF/ELF is an additional opt-in lifetime contract. It uses live image/page
   capacity instead of cumulative attempts, and requires owner-thread maintenance,
   completed-handle disposal and audited external joins. std/support stay resident;
   changing their identity requires restarting the process. See [layered development](LAYERED_DEVELOPMENT.md).

@@ -83,7 +83,7 @@ struct ResidentFoundation {
     runtime: Option<Runtime>,
 }
 
-pub(in crate::jit::coff) fn open_verified_foundation(
+pub(in crate::jit) fn open_verified_foundation(
     foundation: &Foundation,
     id: &str,
 ) -> Result<Runtime, JitError> {

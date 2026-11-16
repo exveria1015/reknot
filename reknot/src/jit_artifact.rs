@@ -1,5 +1,13 @@
 //! Identity-checked artifacts; hashes establish byte identity, not code safety.
-use super::{CoffEngine, CoffLimits, JitError, JitLoadMetrics};
+#[cfg(all(windows, target_arch = "x86_64", target_env = "msvc"))]
+use super::coff::platform;
+#[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
+use super::elf::platform;
+#[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu")))]
+use super::CoffEngine as BackendEngine;
+#[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
+use super::ElfEngine as BackendEngine;
+use super::{CoffLimits, JitError, JitLoadMetrics};
 use crate::LoadedHandler;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -40,7 +48,9 @@ pub(super) struct Foundation {
     rustflags: String,
     cargo_lock_sha256: String,
     support_build: SupportBuild,
+    #[serde(alias = "std_library")]
     pub std_dll: FileRecord,
+    #[serde(alias = "support_library")]
     pub support_dll: FileRecord,
 }
 #[derive(Debug, Deserialize, Serialize)]
@@ -105,18 +115,23 @@ fn validate_file(record: &mut FileRecord, limit: u64) -> Result<(), JitError> {
 impl Manifest {
     fn validate(&mut self, object_limit: usize) -> Result<(), JitError> {
         let f = &mut self.foundation;
-        if self.schema != 2
+        let elf = self.schema == 3 && f.target == "x86_64-unknown-linux-gnu";
+        let coff = self.schema == 2 && f.target == "x86_64-pc-windows-msvc";
+        let flags = if elf {
+            "-C prefer-dynamic=yes -C relocation-model=pic -C force-unwind-tables=yes -C panic=unwind -C lto=off"
+        } else {
+            "-C prefer-dynamic=yes -C force-unwind-tables=yes -C panic=unwind -C lto=off"
+        };
+        if !(coff || elf)
             || self.profile != "layered-rust-library-object"
-            || f.target != "x86_64-pc-windows-msvc"
             || f.handler_abi != 5
             || f.panic != "unwind"
             || f.tls != "generation-local"
             || !f.prefer_dynamic
             || !f.rustc.starts_with("rustc ")
             || !f.rustc.contains("commit-hash: ")
-            || !f.rustc.contains("host: x86_64-pc-windows-msvc")
-            || f.rustflags
-                != "-C prefer-dynamic=yes -C force-unwind-tables=yes -C panic=unwind -C lto=off"
+            || !f.rustc.contains(&format!("host: {}", f.target))
+            || f.rustflags != flags
             || self.logic.crate_type != "lib"
             || self.logic.codegen_units != 1
             || self.logic.lto != "off"
@@ -140,7 +155,11 @@ impl Manifest {
         validate_file(&mut self.logic.artifact, object_limit as u64)?;
         let std_name = dll_name(&f.std_dll)?;
         let support_name = dll_name(&f.support_dll)?;
-        if !std_name.starts_with("std-") || std_name == support_name {
+        if !std_name.starts_with(if elf { "libstd-" } else { "std-" })
+            || !std_name.ends_with(if elf { ".so" } else { ".dll" })
+            || !support_name.ends_with(if elf { ".so" } else { ".dll" })
+            || std_name == support_name
+        {
             return Err(manifest_error("invalid std/support DLL names"));
         }
         Ok(())
@@ -152,16 +171,20 @@ pub(super) fn dll_name(file: &FileRecord) -> Result<String, JitError> {
         .file_name()
         .and_then(|s| s.to_str())
         .ok_or_else(|| manifest_error("invalid DLL filename"))?
-        .to_ascii_lowercase();
+        .to_owned();
+    if name.ends_with(".so") {
+        return Ok(name);
+    }
+    let name = name.to_ascii_lowercase();
     if !name.ends_with(".dll") {
-        return Err(manifest_error("expected a DLL filename"));
+        return Err(manifest_error("expected a .dll or .so library filename"));
     }
     Ok(name)
 }
 impl Foundation {
     fn id(&self) -> Result<String, JitError> {
         // Paths are locators, not identity. Equivalent immutable copies can be
-        // reused. DLL basenames remain significant to Windows import binding.
+        // reused. Basenames remain significant to DLL imports and ELF SONAMEs.
         let mut value = serde_json::to_value(self).map_err(|e| manifest_error(e.to_string()))?;
         value["std_dll"]["path"] = dll_name(&self.std_dll)?.into();
         value["support_dll"]["path"] = dll_name(&self.support_dll)?.into();
@@ -171,8 +194,8 @@ impl Foundation {
     }
 }
 
-/// A bounded schema-2 manifest plus the exact COFF bytes whose digest it names.
-/// Reading and inspecting this value executes no code. DLL bytes are checked and
+/// A bounded schema-2 COFF or schema-3 ELF manifest and captured object bytes.
+/// Reading and inspecting this value executes no code. Library bytes are checked and
 /// pinned when opening a LayeredEngine. A manifest is not an authenticity proof.
 /// ```compile_fail
 /// use reknot::jit::LayeredArtifact;
@@ -187,7 +210,7 @@ pub struct LayeredArtifact {
 impl LayeredArtifact {
     /// Read with the default 32 MiB object limit. Schema 1 is intentionally rejected.
     pub fn read(path: impl AsRef<Path>) -> Result<Self, JitError> {
-        Self::read_with_limit(path, super::super::JitLimits::default().max_object_bytes)
+        Self::read_with_limit(path, super::JitLimits::default().max_object_bytes)
     }
     pub fn read_with_limit(
         path: impl AsRef<Path>,
@@ -243,15 +266,15 @@ impl LayeredArtifact {
     /// safe APIs; the caller need not manually compare std/support identities.
     ///
     /// # Safety
-    /// Trust the producer and these artifacts, including DLL initializers and
+    /// Trust the producer and these artifacts, including library initializers and
     /// dependencies. The manifest must truthfully describe the compiler and
     /// foundation against which the object was built. All code must obey the
-    /// layered Handler/callback/lifetime contracts in `CoffEngine::load`.
+    /// layered Handler/callback/lifetime contracts in `CoffEngine::load` or `ElfEngine::load`.
     /// Neither hashes nor ABI headers prove those properties. Native code and
     /// other unsafe loaders must not tamper with the process loader state or
-    /// introduce conflicting DLLs during initialization. The process loading
-    /// configuration (including .local/SxS redirection) and dependency resolution
-    /// must be trusted and must not redirect these DLLs. Loaded paths are checked
+    /// introduce conflicting libraries during initialization. The process loading
+    /// configuration (including Windows redirection or ELF preload/interposition)
+    /// and system dependencies must be trusted and must not redirect these libraries. Loaded paths are checked
     /// after initialization; that check cannot undo redirected initializers.
     /// Arbitrary code cannot
     /// acquire this trust merely by supplying a matching, self-authored manifest.
@@ -301,10 +324,10 @@ impl ManagedLayeredArtifact {
     }
 }
 
-/// Identity-checked Rust COFF session. One verified resident foundation is allowed
-/// per process. Changed foundations or externally preloaded DLLs require restart.
-/// The first open pins DLL files/directories until process exit. Existing raw
-/// CoffEngine/JitEngine entry points remain available as separate unsafe APIs.
+/// Identity-checked Rust COFF/ELF session. One verified resident foundation is allowed
+/// per process. Changed foundations or externally preloaded libraries require restart.
+/// Windows pins DLL files/directories; Linux pins sealed memfd snapshots until exit.
+/// Raw CoffEngine/ElfEngine/JitEngine remain separate unsafe entry points.
 /// ```compile_fail
 /// use reknot::jit::{CoffLimits, LayeredArtifact, LayeredEngine};
 /// let artifact = LayeredArtifact::read("logic.obj.json").unwrap();
@@ -317,14 +340,17 @@ impl ManagedLayeredArtifact {
 /// }
 /// ```
 pub struct LayeredEngine {
-    engine: CoffEngine,
+    engine: BackendEngine,
     foundation_id: String,
 }
 
 impl LayeredEngine {
-    /// Validate/pin both DLLs before initialization. Reuses an identical verified
+    /// Validate/pin both libraries before initialization. Reuses an identical verified
     /// foundation; never initializes a changed one in this process.
     pub fn open(artifact: &TrustedLayeredArtifact, limits: CoffLimits) -> Result<Self, JitError> {
+        if artifact.0.manifest.foundation.target != native_target() {
+            return Err(JitError::UnsupportedTarget);
+        }
         if limits.load.max_generations == 0
             || limits.load.max_object_bytes == 0
             || limits.load.max_object_bytes >= isize::MAX as usize
@@ -340,28 +366,38 @@ impl LayeredEngine {
                 limit: limits.load.max_object_bytes,
             });
         }
-        #[cfg(all(windows, target_arch = "x86_64", target_env = "msvc"))]
+        #[cfg(any(
+            all(windows, target_arch = "x86_64", target_env = "msvc"),
+            all(target_os = "linux", target_arch = "x86_64", target_env = "gnu")
+        ))]
         {
-            let runtime = super::platform::open_verified_foundation(
+            let runtime = platform::open_verified_foundation(
                 &artifact.0.manifest.foundation,
                 artifact.foundation_id(),
             )?;
+            #[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
+            let limits = limits.into();
             Ok(Self {
-                engine: CoffEngine {
+                engine: BackendEngine {
                     runtime,
                     limits,
                     attempts: 0,
                     keep_loaded_attempts: 0,
+                    #[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
+                    retained_bytes: 0,
                     last_image: None,
                     last_metrics: None,
-                    #[cfg(test)]
+                    #[cfg(all(test, windows))]
                     last_symbols: Default::default(),
                     _owner_thread: Default::default(),
                 },
                 foundation_id: artifact.foundation_id().to_owned(),
             })
         }
-        #[cfg(not(all(windows, target_arch = "x86_64", target_env = "msvc")))]
+        #[cfg(not(any(
+            all(windows, target_arch = "x86_64", target_env = "msvc"),
+            all(target_os = "linux", target_arch = "x86_64", target_env = "gnu")
+        )))]
         {
             let _ = artifact;
             Err(JitError::UnsupportedTarget)
@@ -392,10 +428,13 @@ impl LayeredEngine {
                 "logic foundation differs from the resident session; restart required",
             ));
         }
-        #[cfg(all(windows, target_arch = "x86_64", target_env = "msvc"))]
+        #[cfg(any(
+            all(windows, target_arch = "x86_64", target_env = "msvc"),
+            all(target_os = "linux", target_arch = "x86_64", target_env = "gnu")
+        ))]
         {
             unsafe {
-                super::platform::load_bytes(
+                platform::load_bytes(
                     &mut self.engine,
                     &artifact.0.object,
                     Instant::now(),
@@ -406,7 +445,10 @@ impl LayeredEngine {
                 )
             }
         }
-        #[cfg(not(all(windows, target_arch = "x86_64", target_env = "msvc")))]
+        #[cfg(not(any(
+            all(windows, target_arch = "x86_64", target_env = "msvc"),
+            all(target_os = "linux", target_arch = "x86_64", target_env = "gnu")
+        )))]
         {
             let _ = (artifact, policy, Instant::now());
             Err(JitError::UnsupportedTarget)
@@ -442,11 +484,17 @@ impl LayeredEngine {
                 limit: self.engine.limits.load.max_object_bytes,
             });
         }
-        #[cfg(all(windows, target_arch = "x86_64", target_env = "msvc"))]
+        #[cfg(any(
+            all(windows, target_arch = "x86_64", target_env = "msvc"),
+            all(target_os = "linux", target_arch = "x86_64", target_env = "gnu")
+        ))]
         {
-            super::platform::required_image_bytes(&mut self.engine, &artifact.0.object)
+            platform::required_image_bytes(&mut self.engine, &artifact.0.object)
         }
-        #[cfg(not(all(windows, target_arch = "x86_64", target_env = "msvc")))]
+        #[cfg(not(any(
+            all(windows, target_arch = "x86_64", target_env = "msvc"),
+            all(target_os = "linux", target_arch = "x86_64", target_env = "gnu")
+        )))]
         {
             Err(JitError::UnsupportedTarget)
         }
@@ -473,6 +521,20 @@ impl LayeredEngine {
     /// Artifact read/hash verification happens before load and is not included.
     pub fn last_load_metrics(&self) -> Option<JitLoadMetrics> {
         self.engine.last_load_metrics()
+    }
+}
+
+pub(super) fn native_target() -> &'static str {
+    if cfg!(all(
+        target_os = "linux",
+        target_arch = "x86_64",
+        target_env = "gnu"
+    )) {
+        "x86_64-unknown-linux-gnu"
+    } else if cfg!(all(windows, target_arch = "x86_64", target_env = "msvc")) {
+        "x86_64-pc-windows-msvc"
+    } else {
+        "unsupported"
     }
 }
 
@@ -551,6 +613,75 @@ mod tests {
         ));
         assert_eq!(&*artifact.object, original);
         assert_eq!(digest(&artifact.object), artifact.object_sha256());
+    }
+    #[test]
+    fn elf_schema_preserves_case_and_requires_pic_and_matching_target() {
+        let (path, mut manifest) = fixture();
+        manifest.schema = 3;
+        manifest.foundation.target = "x86_64-unknown-linux-gnu".into();
+        manifest.foundation.rustc =
+            "rustc test\ncommit-hash: test\nhost: x86_64-unknown-linux-gnu".into();
+        manifest.foundation.rustflags = "-C prefer-dynamic=yes -C relocation-model=pic -C force-unwind-tables=yes -C panic=unwind -C lto=off".into();
+        manifest
+            .foundation
+            .std_dll
+            .path
+            .set_file_name("libstd-test.so");
+        manifest
+            .foundation
+            .support_dll
+            .path
+            .set_file_name("libSupport.so");
+        let mut value = serde_json::to_value(&manifest).unwrap();
+        let foundation = value["foundation"].as_object_mut().unwrap();
+        for (old, new) in [
+            ("std_dll", "std_library"),
+            ("support_dll", "support_library"),
+        ] {
+            let record = foundation.remove(old).unwrap();
+            foundation.insert(new.into(), record);
+        }
+        let bytes = serde_json::to_vec(&value).unwrap();
+        let original = LayeredArtifact::from_manifest_bytes(&bytes, 4096).unwrap();
+        write(&path, &manifest);
+        assert_eq!(
+            original.foundation_id(),
+            LayeredArtifact::read(&path).unwrap().foundation_id()
+        );
+        manifest
+            .foundation
+            .support_dll
+            .path
+            .set_file_name("libsupport.so");
+        write(&path, &manifest);
+        assert_ne!(
+            original.foundation_id(),
+            LayeredArtifact::read(&path).unwrap().foundation_id()
+        );
+        for (pointer, replacement) in [
+            ("/schema", serde_json::json!(2)),
+            (
+                "/foundation/target",
+                serde_json::json!("aarch64-unknown-linux-gnu"),
+            ),
+            (
+                "/foundation/rustflags",
+                serde_json::json!(
+                    "-C prefer-dynamic=yes -C force-unwind-tables=yes -C panic=unwind -C lto=off"
+                ),
+            ),
+            (
+                "/foundation/rustc",
+                serde_json::json!("rustc test\ncommit-hash: test\nhost: x86_64-pc-windows-msvc"),
+            ),
+        ] {
+            let mut invalid = value.clone();
+            *invalid.pointer_mut(pointer).unwrap() = replacement;
+            assert!(matches!(
+                LayeredArtifact::from_manifest_bytes(&serde_json::to_vec(&invalid).unwrap(), 4096),
+                Err(JitError::Manifest(_))
+            ));
+        }
     }
     #[test]
     fn foundation_identity_tracks_builds_but_not_locator_or_logic_optimization() {

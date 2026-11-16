@@ -141,7 +141,10 @@ pub fn collect_retired_coff(options: CoffReclaimOptions) -> CoffReclaimReport {
     }
 }
 
-#[cfg(feature = "jit-dev")]
+#[cfg(all(
+    feature = "jit-dev",
+    not(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))
+))]
 pub(crate) fn collect_selected_coff(
     options: CoffReclaimOptions,
     images: &[CoffImageId],
@@ -154,5 +157,60 @@ pub(crate) fn collect_selected_coff(
     {
         let _ = (options, images);
         CoffReclaimReport::default()
+    }
+}
+
+/// Inspect this owner thread's ELF images; identities do not reacquire code.
+pub fn elf_retention_snapshot() -> CoffRetentionSnapshot {
+    #[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
+    {
+        crate::jit::elf::platform::retention::snapshot()
+    }
+    #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu")))]
+    {
+        CoffRetentionSnapshot::default()
+    }
+}
+/// Collect eligible ELF images under the explicitly trusted managed contract.
+/// First remove unwind registration, then release pages. Uncertain failures pin.
+pub fn collect_retired_elf(options: CoffReclaimOptions) -> CoffReclaimReport {
+    #[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
+    {
+        crate::jit::elf::platform::retention::collect(options)
+    }
+    #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu")))]
+    {
+        let _ = options;
+        CoffReclaimReport::default()
+    }
+}
+/// Inspect the native Rust object backend (COFF on Windows, ELF on Linux GNU).
+pub fn jit_retention_snapshot() -> CoffRetentionSnapshot {
+    if cfg!(target_os = "linux") {
+        elf_retention_snapshot()
+    } else {
+        coff_retention_snapshot()
+    }
+}
+/// Explicit owner-thread maintenance for the native Rust object backend.
+pub fn collect_retired_jit(options: CoffReclaimOptions) -> CoffReclaimReport {
+    if cfg!(target_os = "linux") {
+        collect_retired_elf(options)
+    } else {
+        collect_retired_coff(options)
+    }
+}
+#[cfg(feature = "jit-dev")]
+pub(crate) fn collect_selected_jit(
+    options: CoffReclaimOptions,
+    images: &[CoffImageId],
+) -> CoffReclaimReport {
+    #[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
+    {
+        crate::jit::elf::platform::retention::collect_selected(options, Some(images))
+    }
+    #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu")))]
+    {
+        collect_selected_coff(options, images)
     }
 }

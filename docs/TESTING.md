@@ -2,6 +2,17 @@
 
 English | [日本語](../docs_ja/TESTING.md)
 
+## Experimental ELF
+
+On Linux x86_64 GNU, `cargo test -p reknot --no-default-features --features jit-dev --lib --locked`
+checks inspection and relocation arithmetic. Then run
+`cargo test -p reknot --no-default-features --features jit-dev --lib real_elf --locked -- --ignored --nocapture --test-threads=1`
+for actual Rust objects, resident support, generation cutover, panic/TLS and limit
+checks, sealed identity, actual Managed FDE/page release and source watching
+(Wait/CancelOldest, build errors, pinned recovery and foundation restart).
+See [ELF build requirements](ELF_JIT.md). Both commands are in the Linux
+job of the object JIT workflow; other platforms only run the portable inspection tests.
+
 ## Experimental COFF and layered development
 
 The `jit` and `jit-dev` features are opt-in. Ordinary test runs skip the real-COFF

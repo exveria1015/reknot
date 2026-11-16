@@ -1,5 +1,15 @@
 # Standalone ABI fixtures
 
+Linux `real_elf` tests compile the layered support/logic sources as a resident
+Rust `.so` and ELF64 PIC objects, and compile the standalone ABI fixture for
+entry/import rejection. They exercise cutover, generation locals, support TLS,
+contained panic, cancellation, RX code permissions, residency after Drop and
+attempt/input/image/session budgets. Run with `--features jit-dev --lib real_elf --
+--ignored --nocapture --test-threads=1` on Linux x86_64 GNU after caching the SDK
+dependencies. Python 3.9+ and rustup are needed by the checked-artifact tests,
+which also cover foundation identity, Managed collection and source watching
+as described below. These tests require no LLVM bridge.
+
 `jit_layered_support.rs` and `jit_layered_logic.rs` form an isolated Cargo project
 in the layered JIT test. Support is a compiler-matched Rust dylib containing the
 real SDK and non-generic serde_json services; logic is emitted as a single COFF
@@ -59,6 +69,14 @@ registrations, root/child cleanup and Restart. Native tests also reclaim both
 generations after every cancellation registration has been released.
 
 # Layered development and managed reclamation
+
+Linux x86_64 GNU runs `cargo test -p reknot --no-default-features --features jit-dev --lib real_elf --locked -- --ignored --nocapture --test-threads=1`
+with Python 3.9+, stable Rust and a C linker. The ELF checked suite uses the same
+SDK fixtures and isolated subprocesses for sealed foundation identity, preloaded
+library rejection, 128 managed updates, physical `_Unwind_Find_FDE` and
+`/proc/self/maps` release checks, complete external-thread return and injected
+unwind/munmap failures. Source watching covers Wait/CancelOldest, pinned cleanup,
+failed builds and foundation restart. See [the ELF guide](../../../docs/ELF_JIT.md).
 
 The `jit_stage_de_tests` acceptance tests use the layered SDK fixtures with the
 PowerShell producer. Run on Windows x64 MSVC without LLVM:

@@ -1,9 +1,9 @@
-//! Experimental Windows x64 COFF loaders: a Rust layered backend and an LLVM
-//! JITLink backend with a separately built versioned bridge. Enabling this feature
+//! Experimental x64 object loaders: Rust COFF (Windows MSVC), Rust ELF (Linux
+//! GNU), and Windows LLVM JITLink with a separately built bridge. Enabling this feature
 //! never downloads or links LLVM into Cargo.
-//! Optional resident Rust std dependencies support emulated TLS and panic caught
-//! inside the generation. The layered profile adds an explicit support DLL and
-//! rejects all compiler TLS in logic. Arbitrary platform startup is rejected.
+//! The Windows LLVM runtime profile supports emulated TLS. Layered Rust loaders
+//! add explicit resident std/support libraries and reject compiler TLS in logic.
+//! Panics must be caught inside logic/support; arbitrary startup is rejected.
 //! Code and unwind registrations default to process residency. The checked Rust
 //! backend additionally supports explicitly trusted managed artifacts and collection.
 use crate::generation::GenerationOwner;
@@ -20,6 +20,8 @@ use std::time::Instant;
 
 const BRIDGE_ABI: u32 = 3;
 
+#[path = "jit_artifact.rs"]
+mod artifact;
 #[path = "coff.rs"]
 mod coff;
 pub(crate) use coff::retention::CoffTracking;
@@ -29,13 +31,26 @@ pub use coff::{
 };
 pub use coff::{CoffEngine, CoffLimits};
 pub use coff::{LayeredArtifact, LayeredEngine, ManagedLayeredArtifact, TrustedLayeredArtifact};
+#[path = "elf.rs"]
+mod elf;
+pub use elf::{ElfEngine, ElfLimits};
+/// Limits for identity-checked COFF/ELF sessions.
+pub type LayeredLimits = CoffLimits;
+pub use coff::retention::{
+    collect_retired_elf, collect_retired_jit, elf_retention_snapshot, jit_retention_snapshot,
+    CoffImageId as JitImageId, CoffImageRecord as JitImageRecord, CoffImageState as JitImageState,
+    CoffPolicy as JitPolicy, CoffReclaimOptions as JitReclaimOptions,
+    CoffReclaimReport as JitReclaimReport, CoffRetentionReason as JitRetentionReason,
+    CoffRetentionSnapshot as JitRetentionSnapshot,
+};
 #[cfg(feature = "jit-dev")]
 #[path = "jit_development.rs"]
 pub mod development;
 
 /// Conservative bounds before code publication. LLVM and KeepLoaded COFF loads
 /// consume an attempt even on failure or abandonment; Drop never refunds it.
-/// Managed COFF loads use live image/byte limits instead of max_generations.
+/// KeepLoaded ELF uses the same cumulative attempt contract.
+/// Managed COFF/ELF loads use live image/byte limits instead of max_generations.
 #[derive(Clone, Copy, Debug)]
 pub struct JitLimits {
     pub max_generations: usize,
@@ -68,13 +83,13 @@ pub enum JitError {
 impl fmt::Display for JitError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::UnsupportedTarget => write!(f, "JITLink currently requires Windows x64"),
+            Self::UnsupportedTarget => write!(f, "unsupported target for the selected JIT backend"),
             Self::InvalidLimits => write!(f, "JIT limits must be positive and representable"),
             Self::GenerationLimit { limit } => {
                 write!(f, "JIT load attempt budget reached ({limit})")
             }
             Self::RetentionLimit => write!(f, "COFF retained image/byte budget reached"),
-            Self::ObjectTooLarge { limit } => write!(f, "COFF object exceeds {limit} bytes"),
+            Self::ObjectTooLarge { limit } => write!(f, "JIT object exceeds {limit} bytes"),
             Self::Io(e) => write!(f, "JIT input: {e}"),
             Self::Bridge(e) => write!(f, "JIT bridge: {e}"),
             Self::BridgeAbi { expected, found } => {

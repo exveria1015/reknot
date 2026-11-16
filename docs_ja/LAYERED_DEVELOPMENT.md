@@ -1,10 +1,15 @@
-# 二層開発と管理COFFイメージの回収
+# 二層開発と管理イメージの回収
 
 [English](../docs/LAYERED_DEVELOPMENT.md) | 日本語
 
-Windows x64 MSVC、PowerShell 7、コンパイラーを一致させた常駐std/supportを使う実験的な経路です。
+Windows版はx64 MSVC、PowerShell 7、コンパイラーを一致させた常駐std/supportを使う実験的な経路です。
 ホストの `jit-dev` featureは `jit` と `notify` を含み、`native` / `typed` は要求しません。
 logic/supportの依存構成は[コード所有権ガイド](JIT_CODE_OWNERSHIP.md)に従います。Handler ABI 5は維持します。
+
+Linux x86_64 GNUでも同じセッション・所有権APIを使えます。Python 3.9以上と
+`scripts/build-layered-elf.py`をPowerShellビルダーの代わりに指定し、supportには
+`lib`・`.so`を除いたCargo target名を渡します。同一性検証、Managed回収、以下の
+受け入れ状態は共通です。OS固有の処理とビルド手順は[ELFガイド](ELF_JIT.md)に記載します。
 
 ## 起動と進行
 
@@ -13,9 +18,14 @@ use reknot::HostResources;
 use reknot::jit::development::{LayeredDevOptions, LayeredDevSession};
 
 # fn example() -> Result<(), String> {
+let builder = if cfg!(target_os = "linux") {
+    "reknot/scripts/build-layered-elf.py"
+} else {
+    "reknot/scripts/build-layered-jit.ps1"
+};
 let mut options = LayeredDevOptions::new(
     "project/Cargo.toml", "my_logic", "my_support",
-    "reknot/scripts/build-layered-jit.ps1", "project/target/layered-cache",
+    builder, "project/target/layered-cache",
 );
 options.toolchain = "stable".into();
 let resources = HostResources::new(); // ここでアプリケーションのサービスを登録。
@@ -63,7 +73,7 @@ build scriptやincludeの外部入力は完全には推定できません。`dec
 ハッシュします。このキーは再利用候補の選択用で、実行の判定には実際の `foundation_id` を使います。
 再利用失敗時は同じrevisionで一度だけ全確認へ切り替えます。stderrの文字列から土台変更を推定しません。
 土台IDの変更はlogic entryより先に `RestartRequired` を返し、旧Routerを継続します。
-プロセス再起動や接続移行は行いません。ソースを元へ戻してもDLLのバイト列が一致するとは限らず、
+プロセス再起動や接続移行は行いません。ソースを元へ戻してもライブラリのバイト列が一致するとは限らず、
 実際のIDが一致した場合だけ通常更新へ復帰します。
 
 Cargoはmanifestのディレクトリーから、起動時に捕捉した子プロセス環境で実行します。
@@ -72,9 +82,9 @@ Cargoはmanifestのディレクトリーから、起動時に捕捉した子プ�
 
 キャッシュは再利用する `cargo/`、不変の `foundation/` と `objects/`、
 一意な `sessions/<id>/jobs/<id>/` から成ります。同じCargo出力先のbuilderはwriter lockで直列化し、
-workerは実際に終了するまでセッションleaseを保持します。schema 2は変更しません。
+workerは実際に終了するまでセッションleaseを保持します。Windowsはschema 2、Linuxはschema 3を使います。
 版1の `build-result.json` で生成結果をジョブと関連付け、`build-receipt.json` に取得済みmanifestのハッシュ、
-土台・COFFの同一性と時間を記録します。receiptは信頼や回収許可の証明ではありません。
+土台・オブジェクトの同一性と時間を記録します。receiptは信頼や回収許可の証明ではありません。
 
 `max_cache_bytes` の既定は4 GiBです。生成前に現使用量を確認し、不変コピーの公開前にも必要量を保守的に確認します。
 容量不足時は公開を拒否し、ファイルを自動削除しません。ただしビルド中のCargo可変出力やエラーreceiptは閾値を
@@ -85,7 +95,8 @@ Dropは公開を停止してworkerを切り離し、Cargoが終了済みだと�
 
 ## KeepLoadedとManaged
 
-`CoffPolicy` はコードの寿命を二つに分けます。
+`JitPolicy` はコードの寿命を二つに分けます。共通の `Jit*` 型名と `LayeredLimits` は、
+既存の `Coff*` 型と互換性のある別名です。
 
 | 方針 | 退役したlogic | 容量の扱い |
 | --- | --- | --- |
@@ -94,8 +105,8 @@ Dropは公開を停止してworkerを切り離し、Cargoが終了済みだと�
 
 Managedのロードは、エンジンとRouterの累積32試行枠を消費しません。
 `load_attempts()` は全試行の診断用カウンター、`keep_loaded_attempts()` は
-`CoffLimits::load.max_generations` に計上するKeepLoadedの試行数です。
-native DLL、raw COFF、LLVM、static/custom Routerの既存の計上は維持します。
+`LayeredLimits::load.max_generations` に計上するKeepLoadedの試行数です。
+nativeライブラリ、raw COFF/ELF、LLVM、static/custom Routerの既存の計上は維持します。
 Managedはプロセス終了後のデータ永続化を表さず、すべてのイメージを回収できる保証でもありません。
 
 ## 管理寿命の追加契約
@@ -104,13 +115,14 @@ Managedはプロセス終了後のデータ永続化を表さず、すべての�
 回収対象にする場合は、**entry実行前**に追加のunsafe契約を受け入れます。
 
 ```rust,no_run
-use reknot::jit::{CoffLimits, LayeredArtifact, LayeredEngine};
+use reknot::jit::{LayeredLimits, LayeredArtifact, LayeredEngine};
 # fn example() -> Result<(), Box<dyn std::error::Error>> {
-let trusted = unsafe { LayeredArtifact::read("logic.obj.json")?.into_trusted() };
-let mut engine = LayeredEngine::open(&trusted, CoffLimits::default())?;
+let manifest = if cfg!(target_os = "linux") { "logic.o.json" } else { "logic.obj.json" };
+let trusted = unsafe { LayeredArtifact::read(manifest)?.into_trusted() };
+let mut engine = LayeredEngine::open(&trusted, LayeredLimits::default())?;
 let managed = unsafe { trusted.into_managed() }; // 管理profile v1の追加契約。
 let handler = engine.load_managed(managed)?;
-let image_id = handler.coff_image_id(); // 診断専用。コード参照を再取得できない。
+let image_id = handler.jit_image_id(); // 診断専用。コード参照を再取得できない。
 # let _ = image_id; Ok(()) }
 ```
 
@@ -136,7 +148,7 @@ manifestの自己申告による管理型への昇格はありません。
 既定は `ManagedReloadOptions { max_live_generations: 2, pressure: ManagedPressure::Wait }` です。
 実保持数には、このセッションが公開した現用イメージ、ロード済み候補、保持中の退役イメージを含みます。
 現用ハンドラーで応答を続けながら候補を検証するため、2枠以上が必要です。
-他controllerのイメージも、`CoffLimits` の所有スレッド合計数・bytesには含まれます。
+他controllerのイメージも、`LayeredLimits` の所有スレッド合計数・bytesには含まれます。
 
 ```rust,no_run
 use reknot::jit::development::{LayeredDevOptions, LayeredDevSession, ManagedPressure};
@@ -190,25 +202,29 @@ Managedでなくなるのは累積回数による更新上限であり、寿命�
 
 要求・cancel後の後始末・活動を進め、完了済みハンドルをDropし、
 `router.release_retired_generations()` でRouterの保持を終了します。その後、ロードしたスレッドで
-`jit::collect_retired_coff(options)` を呼びます。controllerのDrop後も呼べます。
+`jit::collect_retired_jit(options)` を呼びます。controllerのDrop後も呼べます。
 要求を強制終了せず、保持一覧のロック中にlogicの任意callbackを呼びません。
 
-物理ロードごとに異なる `CoffImageId` を付けます。`coff_retention_snapshot()` はpolicy、状態、
+物理ロードごとに異なる `JitImageId` を付けます。`jit_retention_snapshot()` はpolicy、状態、
 割り当てページ量、参照、実行中呼び出し、locals、活動、失敗理由を返します。診断値は所有権を与えません。
-nativeの既存retention APIは維持します。
-LoadedHandler、PreparedHandler、RequestRouterから同じ診断用 `coff_image_id()` を取得できます。
-公開前rollbackの解放失敗も計上します。公開情報を取得する前のため、その記録は土台IDなし・COFFハッシュ空になります。
+`collect_retired_jit` は実行OSのRustバックエンドを選びます。
+`collect_retired_coff` / `collect_retired_elf` でOSを明示することもできます。
+nativeライブラリの既存retention APIは維持します。
+LoadedHandler、PreparedHandler、RequestRouterから同じ診断用 `jit_image_id()` を取得できます。
+公開前rollbackの解放失敗も計上します。公開情報を取得する前のため、その記録は土台IDなし・オブジェクトハッシュ空になります。
 
 退役、locals・活動の終了、失敗、呼び出し帰還を再確認し、Arcの排他的所有取得で新しいleaseの経路を閉じます。
-所有スレッドでの保守処理だけが登録時のunwind表を解除し、`VirtualFree(base, 0, MEM_RELEASE)` を実行します。
+所有スレッドでの保守処理だけが物理回収します。Windowsはunwind表を解除して
+`VirtualFree(base, 0, MEM_RELEASE)`、Linuxはlibgccのframe登録を解除して`munmap`を実行します。
 失敗時は自動再試行せず保持し、実際の解放成功分だけ実保持予算を戻します。
 最後のleaseのDropや所有スレッド終了からはコードを解放しません。スレッド終了時の未回収イメージと表は
-保持を続けます。logic全件を回収してもstd/supportとそのファイル固定はプロセス寿命まで残ります。
+保持を続けます。logic全件を回収してもstd/supportと、Windowsのファイル固定またはLinuxのseal済みファイル記述子は
+プロセス寿命まで残ります。
 
-`CoffLimits` の既定はKeepLoadedの累積32試行、入力32 MiB、一割り当て64 MiB、所有スレッド全controllerの合計で
+`LayeredLimits` の既定はKeepLoadedの累積32試行、入力32 MiB、一割り当て64 MiB、所有スレッド全controllerの合計で
 保持256イメージ・イメージページ256 MiBです。KeepLoaded、Pinned、解放失敗も合計へ含めます。
 異なる所有スレッドを含むプロセス全体のメモリー上限ではありません。
-Routerの試行数は別に既定32です（開発設定の `max_router_generations`）。Managed COFFはこの枠を消費しません。
+Routerの試行数は別に既定32です（開発設定の `max_router_generations`）。Managed COFF/ELFはこの枠を消費しません。
 どちらのKeepLoaded累積枠も返却しません。実保持数・ページ量の上限は両方のpolicyに適用します。
 解放済み世代の詳細履歴を蓄積せず、保持中一覧と累積解放件数・bytesを残します。
 

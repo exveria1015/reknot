@@ -35,13 +35,14 @@ Use this index to find a topic when you need it during implementation or develop
 ## Continue development
 
 - [Development operation](DEVELOPMENT.md) — Watch sources, build and switch, recover from failure and observe limits.
-- [Layered COFF development](LAYERED_DEVELOPMENT.md) — Build on a background worker, handle foundation changes and opt into managed code reclamation.
+- [Layered COFF/ELF development](LAYERED_DEVELOPMENT.md) — Build on a background worker, handle foundation changes and opt into managed code reclamation.
 - [Troubleshooting](TROUBLESHOOTING.md) — Find checks by symptom or error.
 - [Retention and copy cleanup](RETENTION_AND_CLEANUP.md) — Inspect loaded images, cache sessions and files left after exit.
 - [Compatibility and scope](COMPATIBILITY.md) — Check prerequisites, SDK/ABI requirements and application responsibilities.
 
 ## Look up APIs and internals
 
+- [Linux ELF JIT](ELF_JIT.md) — Direct object loading, verified foundations, Managed collection and Linux source watching.
 - [Code ownership and COFF/JITLink](JIT_CODE_OWNERSHIP.md) — Owned handlers, safe routing, supported JIT subset and native verification.
 - [API reference](API_REFERENCE.md) — API roles, typed-call contracts, build configurations and ABI details.
 - [Architecture and requirements](ARCHITECTURE.md) — Understand ownership, update boundaries, state and failure handling.

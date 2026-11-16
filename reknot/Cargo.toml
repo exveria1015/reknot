@@ -12,7 +12,7 @@ readme = "README.md"
 reknot_abi = { version = "=0.1.0-rc.2", path = "../reknot_abi" }
 reknot_macros = { version = "=0.1.0-rc.2", path = "../reknot_macros" }
 libloading = { version = "0.8", optional = true }
-object = { version = "0.39.1", default-features = false, features = ["read_core", "coff", "std"], optional = true }
+object = { version = "0.39.1", default-features = false, features = ["read_core", "coff", "elf", "std"], optional = true }
 sha2 = { version = "0.10", optional = true }
 notify = { version = "6", optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
@@ -31,7 +31,7 @@ windows-sys = { version = "0.61", optional = true, features = ["Win32_Foundation
 [features]
 default = ["native", "dev-tools", "typed"]
 native = ["dep:libloading", "dep:libc", "dep:windows-sys"]
-jit = ["dep:libloading", "dep:object", "dep:sha2", "dep:serde", "dep:serde_json", "dep:windows-sys", "windows-sys?/Win32_System_Memory", "windows-sys?/Win32_System_LibraryLoader", "windows-sys?/Win32_System_Diagnostics_Debug", "windows-sys?/Win32_System_SystemInformation", "windows-sys?/Win32_Storage_FileSystem"]
+jit = ["dep:libloading", "dep:libc", "dep:object", "dep:sha2", "dep:serde", "dep:serde_json", "dep:windows-sys", "windows-sys?/Win32_System_Memory", "windows-sys?/Win32_System_LibraryLoader", "windows-sys?/Win32_System_Diagnostics_Debug", "windows-sys?/Win32_System_SystemInformation", "windows-sys?/Win32_Storage_FileSystem"]
 jit-dev = ["jit", "dep:notify"]
 dev-tools = ["native", "dep:notify"]
 typed = ["dep:serde", "dep:serde_json", "dep:schemars"]

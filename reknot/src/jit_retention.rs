@@ -1,6 +1,8 @@
-use super::super::{retention::*, CoffLimits};
+// Shared owner-thread registry. Each platform supplies Image::release().
 use super::{Image, JitError};
 use crate::generation::{CodeLease, GenerationOwner};
+use crate::jit::coff::retention::*;
+use crate::jit::CoffLimits;
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::mem::ManuallyDrop;
@@ -109,7 +111,7 @@ pub(super) fn publish(
         });
         let owners = Arc::new(());
         let executions = Arc::new(AtomicUsize::new(0));
-        let code = CodeLease::new(owners.clone(), executions.clone()).with_coff(tracking.clone());
+        let code = CodeLease::new(owners.clone(), executions.clone()).with_jit(tracking.clone());
         r.bytes += image.size;
         r.records.push_back(Record {
             image: ManuallyDrop::new(image),
@@ -130,7 +132,7 @@ pub(super) fn publish(
         ))
     })
 }
-pub(in crate::jit::coff) fn snapshot() -> CoffRetentionSnapshot {
+pub(crate) fn snapshot() -> CoffRetentionSnapshot {
     REGISTRY.with(|registry| {
         let r = registry.borrow();
         let images = r
@@ -179,10 +181,22 @@ pub(in crate::jit::coff) fn snapshot() -> CoffRetentionSnapshot {
         }
     })
 }
-pub(in crate::jit::coff) fn collect(options: CoffReclaimOptions) -> CoffReclaimReport {
+pub(crate) fn collect(options: CoffReclaimOptions) -> CoffReclaimReport {
     collect_selected(options, None)
 }
-pub(in crate::jit::coff) fn collect_selected(
+#[cfg(all(test, target_os = "linux"))]
+pub(crate) fn fail_release(id: CoffImageId, failure: u8) {
+    REGISTRY.with(|r| {
+        r.borrow_mut()
+            .records
+            .iter_mut()
+            .find(|r| r.tracking.id == id)
+            .unwrap()
+            .image
+            .fail_release = failure
+    });
+}
+pub(crate) fn collect_selected(
     options: CoffReclaimOptions,
     selected: Option<&[CoffImageId]>,
 ) -> CoffReclaimReport {

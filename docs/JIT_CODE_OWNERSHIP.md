@@ -2,6 +2,12 @@
 
 English | [日本語](../docs_ja/JIT_CODE_OWNERSHIP.md)
 
+Linux x86_64 GNU also has a Rust [ELF object backend](ELF_JIT.md), using the
+same `LoadedHandler` ownership, checked `LayeredEngine`, Managed lifetime contract
+and `LayeredDevSession`. Linux uses sealed memfd foundation snapshots and libgcc
+deregistration/munmap; the COFF build commands and Windows OS calls below are
+platform-specific. See the ELF guide for the Python builder and Linux details.
+
 ## Ownership boundary
 
 `LoadedHandler` carries a validated handler table together with its code owner.
@@ -26,7 +32,7 @@ The ABI remains byte messages, resource IDs and explicit state migration.
 ## Retention and limits
 
 By default, successfully linked JIT code, data, dependencies and registered unwind tables remain resident
-until process exit. Explicitly managed Rust COFF images can instead use the
+until process exit. Explicitly managed Rust COFF/ELF images can instead use the
 [managed reclamation contract](LAYERED_DEVELOPMENT.md). Dropping a router, engine controller, rejected candidate or final
 Waker never automatically reclaims JIT code. `mem::forget` can retain resources;
 safety does not require every destructor to run. This retention policy does not prove
@@ -42,19 +48,19 @@ consume a slot without refund. Reuse the same engine for a reload session. A new
 engine has a separate budget; this is not a process-wide memory cap. Input size
 does not bound BSS, allocation padding or LLVM overhead. The router's existing
 generation budget separately limits admission attempts. These cumulative limits
-remain in force for LLVM and KeepLoaded COFF; the checked Managed COFF path below
+remain in force for LLVM and KeepLoaded COFF/ELF; the checked Managed path
 uses live image/page capacity instead and does not consume either attempt allowance.
 
 An external callback can release its last Waker and still execute old instructions.
-Counters alone do not establish external quiescence. The safe, explicit managed COFF collector
+Counters alone do not establish external quiescence. The safe, explicit managed object collector
 requires an additional lifetime contract accepted before execution; ordinary loads stay resident.
 Existing unsafe DLL reclamation retains its
 [external-return and TLS requirements](UNLOAD_SAFETY.md).
 
 ## Supported JIT subset
 
-The optional `jit` feature offers `CoffEngine` (Rust; described below) and
-`JitEngine` (LLVM). The latter uses a separately built LLVM 23.1.0 bridge on Windows
+The optional `jit` feature offers `CoffEngine` (Rust; described below),
+`ElfEngine` (Rust; see the [ELF guide](ELF_JIT.md)) and `JitEngine` (LLVM). The latter uses a separately built LLVM 23.1.0 bridge on Windows
 x86-64. It explicitly uses ORC ObjectLinkingLayer / JITLink and registers COFF
 .pdata through RtlAddFunctionTable before publishing the handler entry.
 Each image has its own JITDylib; existing images are never patched in place.
@@ -208,9 +214,12 @@ separately. A faster loader does not establish a faster compiler.
 
 For ordinary layered reloads, use `LayeredArtifact` and `LayeredEngine` instead of
 the raw path-based entry points. `LayeredArtifact::read` safely reads a bounded
-schema-2 manifest, validates the supported profile and captures the exact COFF
-bytes after checking size and SHA-256. Subsequent path replacement cannot change
+schema-2 COFF or schema-3 ELF manifest, validates the supported profile and
+captures the exact object bytes after checking size and SHA-256. Subsequent path replacement cannot change
 that captured object. Schema 1 is rejected rather than treated as verified.
+
+The following commands and file-pinning details describe Windows COFF. For
+Linux sealed snapshots and the Python builder, see the [ELF guide](ELF_JIT.md).
 
 One explicit `unsafe into_trusted()` accepts native-code and producer trust:
 the manifest must truthfully describe the compilation foundation, and code,

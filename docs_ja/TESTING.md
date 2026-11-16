@@ -2,6 +2,17 @@
 
 [English](../docs/TESTING.md) | 日本語
 
+## 実験的なELF
+
+Linux x86_64 GNUで`cargo test -p reknot --no-default-features --features jit-dev --lib --locked`
+を実行し、形式検査と再配置計算を確認します。続いて
+`cargo test -p reknot --no-default-features --features jit-dev --lib real_elf --locked -- --ignored --nocapture --test-threads=1`
+で実際のRustオブジェクト、常駐support、世代切り替え、panic・TLS・上限、sealと同一性、
+ManagedのFDE・ページ解放、ソース監視（Wait／CancelOldest、ビルドエラー、回復要求、
+基盤変更による再起動要求）を検査します。
+必要条件は[ELFガイド](ELF_JIT.md)を参照してください。JIT用CIのLinuxジョブに両コマンドを
+設定しています。他プラットフォームでは移植可能な形式検査を実行します。
+
 ## 実験的なCOFFと二層開発
 
 `jit` / `jit-dev` は任意選択です。通常のテスト実行では実COFFの統合テストは省略されます。
