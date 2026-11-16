@@ -71,10 +71,13 @@ impl LoadedHandler {
 
     pub(crate) fn needs_generation_budget(&self) -> bool {
         #[cfg(feature = "jit")]
-        if self.coff_policy() == Some(crate::jit::CoffPolicy::Managed) {
-            return false;
+        {
+            self.coff_policy() != Some(crate::jit::CoffPolicy::Managed)
         }
-        true
+        #[cfg(not(feature = "jit"))]
+        {
+            true
+        }
     }
 
     /// Native DLL identity, if any. This identifier does not retain code.

@@ -355,11 +355,15 @@ not make unrelated unsafe Rust or arbitrary native code memory-safe.
 ## Build and use
 
 Enabling jit never downloads LLVM or adds a Cargo build script. Build the bridge
-from this source checkout with VS 2022 Build Tools, CMake, Windows SDK, the official
+from this source checkout with Visual Studio C++ Build Tools, CMake, Windows SDK, the official
 [LLVM 23.1.0 SDK](https://github.com/llvm/llvm-project/releases/tag/llvmorg-23.1.0),
 [zlib 1.3.1](https://github.com/madler/zlib/releases/tag/v1.3.1) and
 [zstd 1.5.7](https://github.com/meta/zstd/releases/tag/v1.5.7) source directories.
 The script does not install system software.
+Use a CMake version that supports your installed Visual Studio version. The script
+uses CMake's default Visual Studio generator (or the existing build directory's
+cached generator), rather than requiring a specific Visual Studio release. It
+finds CMake on PATH or through Visual Studio Installer's `vswhere` tool.
 
 Optionally run `./scripts/setup-jit.ps1` to fetch the pinned archives, check their
 SHA-256 hashes and extract them under target/jit-deps; then pass those directories

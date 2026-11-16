@@ -313,11 +313,15 @@ panicは世代内で `catch_unwind` により捕捉する構成に対応しま�
 ## ビルドと利用
 
 jitを有効にしてもLLVMをダウンロードせず、Cargoのビルドスクリプトも追加しません。
-このソースチェックアウトから、VS 2022 Build Tools、CMake、Windows SDKと公式の
+このソースチェックアウトから、Visual Studio C++ Build Tools、CMake、Windows SDKと公式の
 [LLVM 23.1.0 SDK](https://github.com/llvm/llvm-project/releases/tag/llvmorg-23.1.0)、
 [zlib 1.3.1](https://github.com/madler/zlib/releases/tag/v1.3.1)、
 [zstd 1.5.7](https://github.com/meta/zstd/releases/tag/v1.5.7) のソースディレクトリーを使います。
 スクリプトはシステムへのインストールを行いません。
+インストール済みのVisual Studioに対応するCMakeを使用してください。スクリプトは
+特定のVisual Studioの版に固定せず、CMakeの既定のVisual Studioジェネレーター
+（既存のビルドディレクトリーではキャッシュされたジェネレーター）を使用します。
+CMakeはPATH、またはVisual Studio Installerの `vswhere` から探します。
 
 必要なら `./scripts/setup-jit.ps1` で固定したアーカイブを取得し、SHA-256を検査して
 target/jit-depsへ展開できます。そのディレクトリーをビルドスクリプトへ渡してください。
