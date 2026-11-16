@@ -104,6 +104,19 @@ fn second_api() -> HandlerApi {
 }
 
 #[test]
+fn loaded_handler_cutover_preserves_pending_typed_calls() {
+    let first = unsafe { reknot::LoadedHandler::from_static_api(handler_api()) }.unwrap();
+    let host = module().builder().from_loaded(first).unwrap();
+    let echo = host.handler(ECHO).unwrap();
+    let mut old = echo.call("old".to_owned());
+    assert!(poll(&mut old).is_pending());
+    let next = unsafe { reknot::LoadedHandler::from_static_api(second_api()) }.unwrap();
+    assert_eq!(host.reload_loaded(next).unwrap(), 2);
+    assert_eq!(ready(old).unwrap(), "v1:old");
+    assert_eq!(ready(echo.call("new".to_owned())).unwrap(), "v2:new");
+}
+
+#[test]
 fn stable_handle_pins_admission_before_poll_and_survives_controller_drop() {
     let host = host();
     let handle = host.handler(ECHO).unwrap();

@@ -7,6 +7,9 @@ mod environment;
 mod generation;
 mod generation_local;
 mod generation_scope;
+#[cfg(feature = "jit")]
+pub mod jit;
+mod loaded;
 #[cfg(feature = "native")]
 mod native;
 mod notification;
@@ -29,6 +32,7 @@ pub use cache::{clean_cache, inspect_cache, CacheEntry, CacheOptions, CacheRepor
 pub use environment::{HandlerEnvironment, InitData, InitPayload};
 pub use generation_local::GenerationLocal;
 pub use generation_scope::MAX_GENERATION_LOCALS;
+pub use loaded::LoadedHandler;
 #[cfg(feature = "native")]
 pub use native::{reclaim_native_image, LoadError, ReclaimResult};
 pub use notification::HostNotification;

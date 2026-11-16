@@ -41,6 +41,7 @@ Use this index to find a topic when you need it during implementation or develop
 
 ## Look up APIs and internals
 
+- [Code ownership and COFF/JITLink](JIT_CODE_OWNERSHIP.md) — Owned handlers, safe routing, supported JIT subset and native verification.
 - [API reference](API_REFERENCE.md) — API roles, typed-call contracts, build configurations and ABI details.
 - [Architecture and requirements](ARCHITECTURE.md) — Understand ownership, update boundaries, state and failure handling.
 - [Ownership, borrowing and destruction](LIFETIME_REVIEW.md) — Follow asynchronous work and code-generation lifetimes.

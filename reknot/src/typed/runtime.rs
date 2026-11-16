@@ -1,7 +1,8 @@
 use super::*;
 use crate::{
-    HandlerApi, HandlerEnvironment, HostResource, HostResources, InitData, PreparedHandler,
-    RequestRouter, RequestTask, Resource, ResourceId, RouterOptions, RunStatus, ServiceError,
+    HandlerApi, HandlerEnvironment, HostResource, HostResources, InitData, LoadedHandler,
+    PreparedHandler, RequestRouter, RequestTask, Resource, ResourceId, RouterOptions, RunStatus,
+    ServiceError,
 };
 use std::cell::{Cell, RefCell};
 use std::future::Future;
@@ -66,6 +67,19 @@ impl ModuleBuilder {
             resources: self.resources,
             max_in_flight: self.max_in_flight,
         }))
+    }
+    /// Consume the table and code owner together, validating typed contracts
+    /// while that generation remains resident.
+    pub fn from_loaded(self, handler: LoadedHandler) -> Result<ModuleHost, Error> {
+        let environment = self.environment()?;
+        let router = RequestRouter::from_loaded_with_environment(
+            handler,
+            self.resources.clone(),
+            environment,
+            self.options.clone(),
+        )
+        .map_err(|e| route_error(&self.module, e))?;
+        Ok(self.finish(router))
     }
     /// # Safety
     /// The native code, including all initialization and callbacks, must satisfy
@@ -226,6 +240,19 @@ impl ModuleHost {
             .prepare_api(api)
             .map_err(|e| route_error(&self.0.module.borrow(), e))?;
         self.activate(candidate)
+    }
+    /// Consume a loaded generation; existing calls keep their original code.
+    pub fn reload_loaded(&self, handler: LoadedHandler) -> Result<u64, Error> {
+        self.activate(self.prepare_loaded(handler)?)
+    }
+
+    pub(super) fn prepare_loaded(&self, handler: LoadedHandler) -> Result<PreparedHandler, Error> {
+        self.0
+            .router
+            .try_borrow()
+            .map_err(|_| Error::Busy)?
+            .prepare_loaded(handler)
+            .map_err(|e| route_error(&self.module(), e))
     }
     #[cfg(feature = "native")]
     pub(super) unsafe fn prepare(

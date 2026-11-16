@@ -6,6 +6,14 @@ tags and their verification records. A version entry alone does not announce pub
 
 ## Unreleased
 
+- Add move-only, owner-thread `LoadedHandler` values that carry handler tables
+  and code owners together, with safe router and typed Drain/Restart entry points.
+  Host call-return guards now retain code as well as counting active calls.
+- Add an opt-in `jit` feature and separately built LLVM 23.1.0 COFF/JITLink bridge
+  for trusted, self-contained Windows x64 objects. Bound load attempts and input
+  bytes, register unwind tables before publication, and keep linked images resident
+  on ABI rejection, abandonment and Drop. General Rust runtime/TLS support, automatic
+  JIT reclamation and watcher/Cargo integration remain unsupported.
 - Keep the GUI smoke client's HTTP/1.1 connection open instead of forwarding
   per-request `Connection: close` through tauri-driver's native connection pool.
   CI repeats the real WebView test three times with read retries disabled and

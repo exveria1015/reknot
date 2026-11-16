@@ -29,6 +29,7 @@ windows-sys = { version = "0.61", optional = true, features = ["Win32_Foundation
 [features]
 default = ["native", "dev-tools", "typed"]
 native = ["dep:libloading", "dep:libc", "dep:windows-sys"]
+jit = ["dep:libloading"]
 dev-tools = ["native", "dep:notify"]
 typed = ["dep:serde", "dep:serde_json", "dep:schemars"]
 

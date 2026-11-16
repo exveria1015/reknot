@@ -17,6 +17,7 @@
 | `export_handlers!(module(), [handlers])` | crate 内のハンドラーをまとめて公開する。1 crate に1回記述する |
 | `module().builder()` | ホスト資源、サービスの割り当て、同時要求数、Router の設定を組み立てる |
 | `builder.load(path)` / `builder.from_api(api)` | ネイティブ DLL／常駐する関数表から `ModuleHost` を作る。`unsafe` が必要 |
+| `builder.from_loaded(handler)` / `host.reload_loaded(handler)` | 検証済みの関数表とコード所有者をsafe APIで一体として受け取る。[コードの所有権](JIT_CODE_OWNERSHIP.md)を参照 |
 | `DevModule::start(builder, options)` | 初回ビルド・ロードとソース監視を始める。`unsafe` が必要で、今後の編集と依存先も信頼の対象 |
 | `DevModule::update()` | 変更検出、背景ビルドの結果適用、接続したブリッジ、キャンセル後の終了処理を進める |
 | `reknot-new PATH` | host・logic・protocol のひな形を新しいディレクトリへ生成する CLI。feature `typed` が必要 |
@@ -201,6 +202,7 @@ ServiceError と捕捉した unwind は RunStatus::Error へ変換し、元の�
 | API | 挙動 |
 | --- | --- |
 | `unsafe RequestRouter::load(path, resources)` | 信頼済み SDK ネイティブコードをロード |
+| `from_loaded` / `prepare_loaded` | 所有スレッドに属する `LoadedHandler` を受け取り、要求とコールバックにコード所有権を引き継ぐ |
 | `unsafe load_with_options(path, resources, options)` | 共有予算とチェックポイント上限を指定 |
 | `unsafe from_api` / `from_api_with_options` | 静的・独自 API。コードと ABI の寿命は呼び出し元が保証 |
 | `dispatch(resource_id, input)` | 入力をコピーし、Future<Output = RunStatus> の所有 RequestTask を返す |
@@ -264,6 +266,10 @@ Router 再作成時も同じ予算を共有でき、used()・limit() で確認�
 既定で `typed`・`native`・`dev-tools` を有効にします。`typed` はSerde JSONによる型付きハンドラー、`native` は DLL ロード・保持量観測・コピー掃除、
 `dev-tools` は `reknot::development` のソース監視・Cargo ビルド補助を提供します。
 `native` だけを指定した構成には監視機能を含めません。`reknot-cache` は `native` が必要です。
+
+任意選択の `jit` featureは、`native` と独立して `reknot::jit` を提供します。
+実験的なWindows x64バックエンドには別途ビルドしたLLVMブリッジが必要です。
+[対応範囲とビルド手順](JIT_CODE_OWNERSHIP.md)を参照してください。
 ロジック crate と静的リンクのホストでは `default-features = false` を指定してください。
 
 | 構成 | 依存の指定 | 含まれる機能 |

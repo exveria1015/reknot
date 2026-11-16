@@ -32,16 +32,16 @@ impl CodeLease {
     }
     pub(crate) fn enter(&self) -> CallGuard {
         self.executions.fetch_add(1, Ordering::AcqRel);
-        CallGuard(self.executions.clone())
+        CallGuard(self.clone())
     }
 }
 
 /// Lives on the host stack until the foreign call has returned. It deliberately
 /// survives destruction of a lease from inside a callback.
-pub(crate) struct CallGuard(Arc<AtomicUsize>);
+pub(crate) struct CallGuard(CodeLease);
 impl Drop for CallGuard {
     fn drop(&mut self) {
-        self.0.fetch_sub(1, Ordering::AcqRel);
+        self.0.executions.fetch_sub(1, Ordering::AcqRel);
     }
 }
 pub(crate) fn enter(lease: &Option<CodeLease>) -> Option<CallGuard> {
@@ -51,26 +51,40 @@ pub(crate) fn enter(lease: &Option<CodeLease>) -> Option<CallGuard> {
 pub(crate) struct GenerationOwner {
     pub(crate) code: CodeLease,
     #[cfg(feature = "native")]
-    pub(crate) id: crate::ArtifactId,
+    pub(crate) id: Option<crate::ArtifactId>,
 }
 impl GenerationOwner {
+    #[cfg(any(feature = "jit", test))]
+    pub(crate) fn resident(code: Arc<dyn Send + Sync>) -> Self {
+        Self {
+            code: CodeLease::new(code, Arc::new(AtomicUsize::new(0))),
+            #[cfg(feature = "native")]
+            id: None,
+        }
+    }
     pub(crate) fn prepared(&self) {
         #[cfg(feature = "native")]
-        crate::retention::update(self.id, |v| {
-            v.state = crate::ImageState::Prepared;
-            v.outcome = crate::ImageOutcome::Candidate;
-        });
+        if let Some(id) = self.id {
+            crate::retention::update(id, |v| {
+                v.state = crate::ImageState::Prepared;
+                v.outcome = crate::ImageOutcome::Candidate;
+            });
+        }
     }
     pub(crate) fn activate(&self) {
         #[cfg(feature = "native")]
-        crate::retention::update(self.id, |v| {
-            v.state = crate::ImageState::Active;
-            v.outcome = crate::ImageOutcome::Adopted;
-        });
+        if let Some(id) = self.id {
+            crate::retention::update(id, |v| {
+                v.state = crate::ImageState::Active;
+                v.outcome = crate::ImageOutcome::Adopted;
+            });
+        }
     }
     pub(crate) fn retire(&self) {
         #[cfg(feature = "native")]
-        crate::retention::update(self.id, |v| v.state = crate::ImageState::Retired);
+        if let Some(id) = self.id {
+            crate::retention::update(id, |v| v.state = crate::ImageState::Retired);
+        }
     }
 
     pub(crate) fn lease(&self) -> CodeLease {
@@ -83,14 +97,16 @@ impl GenerationOwner {
 impl Drop for GenerationOwner {
     fn drop(&mut self) {
         #[cfg(feature = "native")]
-        crate::retention::update(self.id, |v| {
-            v.state = crate::ImageState::Retired;
-            v.outcome = match v.outcome {
-                crate::ImageOutcome::Pending => crate::ImageOutcome::Rejected,
-                crate::ImageOutcome::Candidate => crate::ImageOutcome::Abandoned,
-                other => other,
-            };
-        });
+        if let Some(id) = self.id {
+            crate::retention::update(id, |v| {
+                v.state = crate::ImageState::Retired;
+                v.outcome = match v.outcome {
+                    crate::ImageOutcome::Pending => crate::ImageOutcome::Rejected,
+                    crate::ImageOutcome::Candidate => crate::ImageOutcome::Abandoned,
+                    other => other,
+                };
+            });
+        }
     }
 }
 
@@ -112,9 +128,14 @@ mod tests {
         }));
         assert_eq!(calls.load(Ordering::Acquire), 1);
         drop(lease);
-        assert_eq!(Arc::strong_count(&code), 1);
+        assert_eq!(
+            Arc::strong_count(&code),
+            2,
+            "the host return guard owns code too"
+        );
         assert_eq!(calls.load(Ordering::Acquire), 1);
         drop(outer);
         assert_eq!(calls.load(Ordering::Acquire), 0);
+        assert_eq!(Arc::strong_count(&code), 1);
     }
 }

@@ -17,6 +17,7 @@ This section collects contracts and limits. The typed API uses the existing ABI 
 | `export_handlers!(module(), [handlers])` | Export the crate's handlers together; use once per crate |
 | `module().builder()` | Configure host resources, service bindings, request capacity and router options |
 | `builder.load(path)` / `builder.from_api(api)` | Create a `ModuleHost` from a native DLL or resident callback table; requires `unsafe` |
+| `builder.from_loaded(handler)` / `host.reload_loaded(handler)` | Consume a validated table and code owner together through safe APIs; see [code ownership](JIT_CODE_OWNERSHIP.md) |
 | `DevModule::start(builder, options)` | Begin the initial build/load and source watching; requires `unsafe`, including trust in future edits and dependencies |
 | `DevModule::update()` | Detect edits, apply background build results, drive attached bridges and run cancellation cleanup |
 | `reknot-new PATH` | Generate host, logic and protocol crates in a new directory; requires feature `typed` |
@@ -200,6 +201,7 @@ Destructor panics and `panic=abort` are outside recovery guarantees.
 | API | Behavior |
 | --- | --- |
 | `unsafe RequestRouter::load(path, resources)` | Load trusted SDK-native code |
+| `from_loaded` / `prepare_loaded` | Consume an owner-thread `LoadedHandler`, preserving code ownership through requests and callbacks |
 | `unsafe load_with_options(path, resources, options)` | Set a shared budget and checkpoint limit |
 | `unsafe from_api` / `from_api_with_options` | Use static/custom callbacks; the caller guarantees code and ABI lifetimes |
 | `dispatch(resource_id, input)` | Copy input and return an owned `RequestTask` implementing `Future<Output = RunStatus>` |
@@ -262,6 +264,10 @@ Share the budget across router recreation and inspect it through `used()` / `lim
 Defaults enable `typed`, `native` and `dev-tools`. `typed` provides Serde JSON handlers; `native` provides DLL loading, retention diagnostics and copy cleanup;
 `dev-tools` provides source watching and Cargo helpers through `reknot::development`.
 A `native`-only configuration does not include watching. `reknot-cache` requires `native`.
+
+The opt-in `jit` feature provides `reknot::jit` independently of `native`. Its
+experimental Windows x64 backend needs a separately built LLVM bridge; see
+[the supported subset and build instructions](JIT_CODE_OWNERSHIP.md).
 Use `default-features = false` in logic crates and statically linked hosts.
 
 | Configuration | Dependency options | Included features |

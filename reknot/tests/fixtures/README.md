@@ -1,5 +1,10 @@
 # Standalone ABI fixtures
 
+`jit_handler.rs` and `jit_compute.rs` use the frozen ABI without std, allocation,
+CRT or TLS. They compile as COFF objects for the optional real JIT test, with one
+task slot per image. Variants deliberately request bad ABI, TLS and unresolved
+imports to verify rejection. This constrained fixture is not a general runtime.
+
 `handler.rs` is compiled directly with rustc as a native DLL. It uses the
 co-located `abi_v5.rs` snapshot and does not import the SDK or its macros.
 Both files are included in the `reknot` package, so native ABI tests can

@@ -2,8 +2,8 @@ use crate::generation::GenerationOwner;
 #[cfg(feature = "native")]
 use crate::native::{load, LoadError};
 use crate::{
-    FfiFuture, HandlerApi, HandlerRequest, HostResources, ResourceId, RunStatus, ServiceError,
-    ServiceKey, HANDLER_ABI_VERSION,
+    FfiFuture, HandlerApi, HandlerRequest, HostResources, LoadedHandler, ResourceId, RunStatus,
+    ServiceError, ServiceKey, HANDLER_ABI_VERSION,
 };
 use crate::{HandlerEnvironment, ServiceBinding};
 use std::cell::{Cell, RefCell};
@@ -198,7 +198,7 @@ impl PreparedHandler {
     /// Native artifact identity without extending its lifetime. Static APIs have none.
     #[cfg(feature = "native")]
     pub fn artifact_id(&self) -> Option<crate::ArtifactId> {
-        self.image.as_ref().map(|image| image.id)
+        self.image.as_ref().and_then(|image| image.id)
     }
 
     pub fn based_on(&self) -> u64 {
@@ -223,6 +223,62 @@ pub struct RequestRouter {
 }
 
 impl RequestRouter {
+    /// Consume a validated, owner-thread code generation. The loader has already
+    /// established the unsafe code/ABI contract; this operation retains its owner.
+    pub fn from_loaded(
+        handler: LoadedHandler,
+        resources: HostResources,
+    ) -> Result<Self, RouteError> {
+        Self::from_loaded_with_options(handler, resources, RouterOptions::default())
+    }
+
+    pub fn from_loaded_with_options(
+        handler: LoadedHandler,
+        resources: HostResources,
+        options: RouterOptions,
+    ) -> Result<Self, RouteError> {
+        Self::from_loaded_with_environment(
+            handler,
+            resources,
+            HandlerEnvironment::default(),
+            options,
+        )
+    }
+
+    pub fn from_loaded_with_environment(
+        handler: LoadedHandler,
+        resources: HostResources,
+        environment: HandlerEnvironment,
+        options: RouterOptions,
+    ) -> Result<Self, RouteError> {
+        if options.max_checkpoint_bytes == 0 {
+            return Err(RouteError::InvalidLimits);
+        }
+        options.generations.reserve()?;
+        let (api, image) = handler.into_parts();
+        Self::create(api, image, resources, options, environment)
+    }
+
+    /// Prepare a loaded generation without admitting requests to it. A rejected
+    /// or abandoned candidate never unloads its machine code automatically.
+    pub fn prepare_loaded(&self, handler: LoadedHandler) -> Result<PreparedHandler, RouteError> {
+        self.prepare_loaded_with_environment(handler, self.active.environment.clone())
+    }
+
+    pub fn prepare_loaded_with_environment(
+        &self,
+        handler: LoadedHandler,
+        environment: HandlerEnvironment,
+    ) -> Result<PreparedHandler, RouteError> {
+        self.active
+            .id
+            .checked_add(1)
+            .ok_or(RouteError::GenerationExhausted)?;
+        self.options.generations.reserve()?;
+        let (api, image) = handler.into_parts();
+        self.candidate(api, image, environment)
+    }
+
     /// # Safety
     /// The module must be trusted, including initializers/finalizers. Its API
     /// must obey HandlerRequest's copy/retain contract and the owned FFI future
@@ -271,8 +327,8 @@ impl RequestRouter {
             return Err(RouteError::InvalidLimits);
         }
         options.generations.reserve()?;
-        let (api, image) = load(path.as_ref())?;
-        Self::create(api, Some(image), resources, options, environment)
+        let (api, image) = load(path.as_ref())?.into_parts();
+        Self::create(api, image, resources, options, environment)
     }
 
     /// # Safety
@@ -366,8 +422,8 @@ impl RequestRouter {
             .checked_add(1)
             .ok_or(RouteError::GenerationExhausted)?;
         self.options.generations.reserve()?;
-        let (api, image) = load(path.as_ref())?;
-        self.candidate(api, Some(image), environment)
+        let (api, image) = load(path.as_ref())?.into_parts();
+        self.candidate(api, image, environment)
     }
 
     /// # Safety
@@ -593,7 +649,7 @@ impl RequestRouter {
     /// Native artifact identity without extending its lifetime. Static APIs have none.
     #[cfg(feature = "native")]
     pub fn artifact_id(&self) -> Option<crate::ArtifactId> {
-        self.active.image.as_ref().map(|image| image.id)
+        self.active.image.as_ref().and_then(|image| image.id)
     }
 
     /// Releases this router's ownership of completed, retired generations.

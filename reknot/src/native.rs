@@ -1,7 +1,7 @@
 //! Native images stay loaded unless explicitly reclaimed on their owner thread.
 use crate::generation::{CodeLease, GenerationOwner};
 use crate::{ArtifactId, CopyRemovalError, ImageOutcome, ImageRecord, ImageState, RetentionReason};
-use crate::{HandlerApi, HandlerHeader, RouteError, HANDLER_ABI_VERSION};
+use crate::{LoadedHandler, RouteError};
 use libloading::Library;
 use reknot_abi::services::HandlerApiFn;
 use std::fmt;
@@ -111,7 +111,7 @@ fn copy_library(source_path: &Path) -> Result<LibraryCopy, LoadError> {
     }
     result
 }
-pub(crate) unsafe fn load(path: &Path) -> Result<(HandlerApi, GenerationOwner), RouteError> {
+pub(crate) unsafe fn load(path: &Path) -> Result<LoadedHandler, RouteError> {
     let copy = copy_library(path).map_err(RouteError::Load)?;
     let library = Library::new(&copy.path)
         .inspect_err(|_| {
@@ -132,30 +132,13 @@ pub(crate) unsafe fn load(path: &Path) -> Result<(HandlerApi, GenerationOwner), 
         .push(library.clone());
     let image = GenerationOwner {
         code: CodeLease::new(library.clone(), library.executions.clone()).with_native_id(id),
-        id,
+        id: Some(id),
     };
-    let _call = image.enter();
     let entry = library
         .library
         .get::<HandlerApiFn>(b"hot_handler_api")
         .map_err(|error| RouteError::Load(LoadError::LibLoading(error)))?;
-    let pointer = entry();
-    if pointer.is_null() {
-        return Err(RouteError::InvalidApi);
-    }
-    // Read only the stable header before accessing the rest of the table.
-    let header = pointer.cast::<HandlerHeader>().read();
-    if header.abi_version != HANDLER_ABI_VERSION
-        || header.struct_size < reknot_abi::services::HANDLER_API_V5_SIZE as u32
-    {
-        return Err(RouteError::Abi {
-            version: header.abi_version,
-            size: header.struct_size,
-        });
-    }
-    let api = HandlerApi::read_compatible(pointer);
-    crate::routing::validate(api)?;
-    Ok((api, image))
+    LoadedHandler::from_entry(*entry, image)
 }
 
 /// Outcome of one explicit reclamation attempt. Copy deletion and native close

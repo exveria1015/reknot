@@ -14,6 +14,7 @@ $taskResults = @()
 $taskModels = if ($BorrowModel -eq 'Both') { @('Stacked', 'Tree') } else { @($BorrowModel) }
 $taskGroups = @(
     @{ Name = 'generation'; Args = @('--lib', 'generation::') },
+    @{ Name = 'loaded-handler'; Args = @('--lib', 'loaded::') },
     @{ Name = 'generation-scope'; Args = @('--lib', 'generation_scope::') },
     @{ Name = 'host-notifications'; Args = @('--lib', 'notification::') },
     @{ Name = 'notification-unwind'; Args = @('--test', 'notification_unwind') },
@@ -48,7 +49,7 @@ try {
     $taskSourceFiles = @(
         'Cargo.toml', 'reknot/Cargo.toml', 'reknot_abi/Cargo.toml', 'reknot_macros/Cargo.toml',
         'reknot_abi/src/lib.rs', 'reknot_macros/src/lib.rs', 'reknot/src/lib.rs',
-        'reknot/src/internal.rs', 'reknot/src/generation.rs', 'reknot/src/native.rs',
+        'reknot/src/internal.rs', 'reknot/src/generation.rs', 'reknot/src/native.rs', 'reknot/src/loaded.rs',
         'reknot/src/generation_scope.rs', 'reknot/src/generation_local.rs',
         'reknot/src/notification.rs', 'reknot/tests/generation_locals.rs',
         'reknot/src/task/future.rs', 'reknot/src/task/waker.rs', 'reknot/src/task/mod.rs',

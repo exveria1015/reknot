@@ -41,6 +41,7 @@
 
 ## API と内部設計を調べる
 
+- [コードの所有権とCOFF/JITLink](JIT_CODE_OWNERSHIP.md) — 所有者付きハンドラー、safeなルーティング、JITの対応範囲と実機検証。
 - [API リファレンス](API_REFERENCE.md) — API の役割、型付き呼び出しの制約、ビルド構成、ABI。
 - [設計と要件](ARCHITECTURE.md) — 所有の分担、更新の境界、状態と失敗の扱い。
 - [所有・借用・破棄順序](LIFETIME_REVIEW.md) — 非同期実行とコード世代の寿命。

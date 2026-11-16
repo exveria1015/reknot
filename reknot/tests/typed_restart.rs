@@ -184,6 +184,34 @@ fn typed_restart_migrates_after_join_and_preserves_clients_and_ordinary_request_
 }
 
 #[test]
+fn loaded_generations_support_restart_and_explicit_state_migration() {
+    let loaded = unsafe { reknot::LoadedHandler::from_static_api(handler_api()) }.unwrap();
+    let host = module().builder().from_loaded(loaded).unwrap();
+    let next = unsafe { reknot::LoadedHandler::from_static_api(handler_api()) }.unwrap();
+    let mut same = host.restart_loaded(next).unwrap();
+    assert_eq!(ready(&mut same).unwrap(), 2);
+    host.start_worker(WorkerId(1), WORK, 0, OLD, &5).unwrap();
+    assert!(host.poll_workers(&mut cx()).is_pending());
+    let next = unsafe { reknot::LoadedHandler::from_static_api(new_api()) }.unwrap();
+    let mut changed = host
+        .restart_loaded_with(
+            next,
+            NEW.migrate(|_, checkpoint| {
+                Ok(Counter {
+                    total: OLD.decode(checkpoint)? + 100,
+                })
+            }),
+        )
+        .unwrap();
+    assert_eq!(ready(&mut changed).unwrap(), 3);
+    assert_eq!(
+        host.worker_checkpoint(WorkerId(1), NEW).unwrap(),
+        Some(Counter { total: 107 })
+    );
+    cleanup(&host);
+}
+
+#[test]
 fn migration_failure_preserves_old_state_and_retry_requires_explicit_resume() {
     let host = host();
     host.start_worker(WorkerId(1), WORK, 0, OLD, &10).unwrap();

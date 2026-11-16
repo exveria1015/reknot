@@ -280,6 +280,11 @@ impl ModuleHost {
             .map_err(|e| route_error(&self.module(), e))?;
         self.restart_prepared(candidate)
     }
+    /// Restart using a loaded generation with its code ownership intact.
+    pub fn restart_loaded(&self, handler: crate::LoadedHandler) -> Result<ModuleRestart, Error> {
+        self.settle_abandoned_restart();
+        self.restart_prepared(self.prepare_loaded(handler)?)
+    }
     /// Restart with explicit migration into the next versioned state contract.
     /// Handler input/output contracts remain unchanged; change those by restarting
     /// the host and rebuilding its clients.
@@ -319,6 +324,24 @@ impl ModuleHost {
             .try_borrow()
             .map_err(|_| Error::Busy)?
             .prepare_api_with_environment(api, environment)
+            .map_err(|e| route_error(&next, e))?;
+        self.migrate_prepared(candidate, next, migration)
+    }
+    /// Restart and migrate state without separating callbacks from their owner.
+    pub fn restart_loaded_with<S: Serialize + DeserializeOwned + JsonSchema + 'static>(
+        &self,
+        handler: crate::LoadedHandler,
+        migration: StateMigration<S>,
+    ) -> Result<ModuleRestart, Error> {
+        self.settle_abandoned_restart();
+        let next = self.module().with_state(migration.state);
+        let environment = self.restart_environment(&next)?;
+        let candidate = self
+            .0
+            .router
+            .try_borrow()
+            .map_err(|_| Error::Busy)?
+            .prepare_loaded_with_environment(handler, environment)
             .map_err(|e| route_error(&next, e))?;
         self.migrate_prepared(candidate, next, migration)
     }
