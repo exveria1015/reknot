@@ -16,8 +16,8 @@ use the same message API and ownership contracts.
 | Tauri GUI | Platform Tauri prerequisites; WebView2 on Windows; no npm or Tauri CLI |
 | Native core and examples | Windows and Linux CI jobs are configured |
 | Experimental Rust COFF (`jit`) | Windows x64 MSVC; compiler-matched resident std/support DLLs; no LLVM required |
-| Experimental Rust ELF (`jit`) | Linux x86_64 GNU/glibc; ELF64 ET_REL/PIC objects, resident compiler-matched std/support; no LLVM required; checked identity, opt-in Managed collection and Python 3.9+ `jit-dev` |
-| Layered development (`jit-dev`) | COFF + PowerShell 7 on Windows, or ELF + Python 3.9+ on Linux; repository layered builder |
+| Experimental Rust ELF (`jit`) | Linux x86_64 GNU/glibc; ELF64 ET_REL/PIC objects, resident compiler-matched std/support; no LLVM required; checked identity, opt-in Managed collection and Rust-produced `jit-dev` |
+| Layered development (`jit-dev`) | COFF on Windows or ELF on Linux; built-in Rust producer, with optional legacy external scripts |
 | Experimental LLVM COFF (`jit`) | Windows x64, MSVC COFF and a separately built LLVM 23.1.0 bridge; emulated TLS additionally requires nightly Rust |
 | GUI backend | Windows and Linux CI integration without opening a window |
 | GUI interaction | Linux WebView under Xvfb; editor, Drain/Restart and build-error recovery |

@@ -7,6 +7,9 @@
 呼び出しません。ホストの依存で`default-features = false, features = ["jit"]`を
 指定します。通常の`.so`ロードには引き続き`native`を使えます。
 
+通常の開発では[内蔵Rustビルダー](LAYERED_DEVELOPMENT.md)を使い、Pythonなしでビルドできます。
+以下は引き続き利用できる外部Pythonビルダーの手順です。
+
 ## 基盤の自動同一性検証とManaged回収
 
 Python 3.9以上、rustup、stable Rust、Cリンカーを用意し、

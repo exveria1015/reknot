@@ -6,6 +6,71 @@ tags and their verification records. A version entry alone does not announce pub
 
 ## Unreleased
 
+### Typed development and message formats
+
+- Select native DLL or checked layered COFF/ELF builds through the same typed
+  `DevModule`. Existing `DevOptions` keep native behavior; `LayeredDevOptions`
+  select the object backend. Preserve typed handles, bridge admission, structured
+  contract rejection, Drain and cooperative Restart with worker checkpoints.
+  `start_managed` explicitly accepts the additional lifetime contract. Share
+  source/build admission and per-session collection with `LayeredDevSession`;
+  report foundation restart and retention conditions through `layered_snapshot`
+  and `ReloadEvent::Layered`. `shutdown` joins build workers without cancelling
+  requests. The layered logic/support layout remains required; the generator's
+  native default is unchanged. See [typed JIT development](docs/TYPED_JIT.md).
+- Add optional `typed-binary` MessagePack handlers via `Handler::with_format`.
+  Named fields and explicit format identity preserve contract diagnostics; JSON
+  remains the default and metadata/checkpoints stay JSON. Both formats keep the
+  1 MiB encoded limit and owned-byte boundary. This is serialization, not zero-copy.
+  See [binary messages](docs/BINARY_MESSAGES.md).
+
+### Build pipeline and artifact preparation
+
+- Add the built-in Rust COFF/ELF producer, `LayeredDevOptions::builtin`,
+  `jit::builder::build` and `reknot-build`. Ordinary layered development no longer
+  needs PowerShell/Python. Preserve checked foundation capture, immutable output,
+  writer locking and capacity limits; retain the existing external script path.
+- Default the built-in layered producer's resident support/dependencies to dev
+  opt-level 1 while leaving logic at 0. Add `support_optimization` and the CLI's
+  `--support-optimization` override, including Cargo profile inheritance. This
+  changes compilation costs and can increase edit-to-response time; see
+  [build settings](docs/LAYERED_DEVELOPMENT.md#inputs-foundation-and-cache).
+- Prepare native development DLL copies and verify their bytes on the build
+  worker. Keep DLL initialization, contract validation, and activation on the
+  owner thread; discard unused copies without loading them.
+- Stop superseded layered development jobs between preparation, generation and
+  publication stages. Let running Cargo processes finish; skip obsolete reuse
+  retries and report the stopping stage through the layered diagnostic. Preserve
+  all checks for adopted artifacts and the final owner-thread revision checks.
+- Share Cargo metadata and pre-build compiler information within each built-in
+  JIT build attempt, using the actual Cargo output directory. Refresh preparation
+  on retries and retain dependency watches after generation failures. Reduce
+  duplicate file queries in both cache-capacity scans; keep post-build identity checks.
+
+### Documentation and benchmarks
+
+- Add a three-concept entry path in the README and generated starter, with
+  separate development contracts for advanced lifetime, Restart and JIT work.
+- Add reproducible native DLL/JIT edit-to-response and JSON/MessagePack typed
+  round-trip benchmarks with warmups, raw samples and environment details.
+  Add ongoing-request measurements for Drain, Managed collection, Restart and
+  consecutive saves, plus a raw-data analyzer. Keep historical measurements
+  separate from current producer settings in the [benchmark guide](docs/BENCHMARKS.md).
+- Align the English/Japanese task indexes, API guides and test instructions.
+
+### Rust API migration
+
+- Manual `HandlerSpec` literals need the new `format` field; use `WireFormat::Json`
+  to retain the default encoding. Changing encoding requires a contract-version
+  update and rebuilding/restarting the host.
+- `ReloadEvent` is now non-exhaustive: callers matching every variant must include
+  a fallback. `LayeredDevState` adds `Restarting`, requiring exhaustive matches to
+  be updated.
+- `LayeredDevOptions` adds producer and support-profile settings. Prefer its
+  `new`/`builtin` constructors to listing every field in a struct literal.
+
+### Experimental object loaders and lifetime management
+
 - Add experimental `jit::ElfEngine` / `ElfLimits` for Linux x86_64 GNU ELF64
   relocatable objects, without an LLVM bridge. Resolve PIC/GOT/PLT relocations
   against explicit resident std/support shared libraries and GNU runtimes,
@@ -19,8 +84,6 @@ tags and their verification records. A version entry alone does not announce pub
   pressure, failed-build recovery and foundation restart reporting. Preserve
   existing Windows APIs and add common `Jit*` aliases. Test real Linux objects,
   128 managed updates, OS release, failed cleanup and source-watch flows in CI.
-- Keep `dev-tools` usable without `typed` by gating the shared typed/JIT watcher
-  to its consumers; check that feature combination and JIT fixture formatting in CI.
 - Add optional `jit-dev` layered development sessions: one background producer,
   shared source watching, revision/graph checks, structured job receipts, immutable
   cache publication and foundation restart reporting. Preserve active requests on
@@ -40,7 +103,6 @@ tags and their verification records. A version entry alone does not announce pub
   cleanup, join and ownership release. Maintain only the session's images, preserve a
   built candidate during capacity waits and report pinned failures without accumulating
   more generations. Add selective `RequestRouter::cancel_retired_generation`.
-
 - Add move-only, owner-thread `LoadedHandler` values that carry handler tables
   and code owners together, with safe router and typed Drain/Restart entry points.
   Host call-return guards now retain code as well as counting active calls.
@@ -79,6 +141,11 @@ tags and their verification records. A version entry alone does not announce pub
   directories until process exit. Reject mismatches and externally preloaded DLLs;
   preserve the old generation after rejection. Native-code/producer trust remains
   explicit through `unsafe into_trusted()`; hashes do not establish code safety.
+
+### Development and CI fixes
+
+- Keep `dev-tools` usable without `typed` by gating the shared typed/JIT watcher
+  to its consumers; check that feature combination and JIT fixture formatting in CI.
 - Keep the GUI smoke client's HTTP/1.1 connection open instead of forwarding
   per-request `Connection: close` through tauri-driver's native connection pool.
   CI repeats the real WebView test three times with read retries disabled and

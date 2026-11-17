@@ -2,6 +2,23 @@
 
 English | [日本語](../docs_ja/TESTING.md)
 
+## Typed JIT and binary messages
+
+Typed JIT integration tests use the built-in Rust producer. To include MessagePack:
+
+```sh
+cargo test -p reknot --no-default-features --features typed-binary,jit-dev --test layered_typed --locked -- --ignored --nocapture
+cargo test -p reknot --no-default-features --features typed-binary --test typed_binary --locked
+cargo test -p reknot --no-default-features --features jit-dev --lib superseded_stages_release_lock_and_do_not_publish --locked -- --ignored --nocapture
+```
+
+`layered_typed` isolates KeepLoaded, Managed, Restart, interrupted recovery, initial contract rejection,
+and producer reuse/non-overwrite/capacity checks in separate processes. It also checks
+that superseded edits keep the active generation and allow later build-error recovery.
+The producer stage test checks early return before publication, writer-lock release
+and recovery, including a superseded compilation error. Set `REKNOT_TYPED_JIT_PRODUCER=script`
+to exercise the legacy external producer route as well. Run the [timing benchmark](BENCHMARKS.md) alone.
+
 ## Experimental ELF
 
 On Linux x86_64 GNU, `cargo test -p reknot --no-default-features --features jit-dev --lib --locked`
@@ -261,3 +278,7 @@ cargo tree -p service_host --no-default-features --features static-logic --edges
 
 Confirm that the static dependency tree excludes libloading, notify and the old runtime adapters.
 The default targets are the three core crates. Select examples explicitly with `-p` or `--workspace`.
+
+## Typed layered development
+
+[The typed JIT guide](TYPED_JIT.md#verify-the-integration) gives the Windows/Linux real-object test command and coverage.

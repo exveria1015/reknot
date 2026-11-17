@@ -2,6 +2,22 @@
 
 [English](../docs/TESTING.md) | 日本語
 
+## 型付きJITとバイナリメッセージ
+
+型付きJITの実行試験は内蔵Rustビルダーを使います。MessagePackも含める場合は次を実行します。
+
+```sh
+cargo test -p reknot --no-default-features --features typed-binary,jit-dev --test layered_typed --locked -- --ignored --nocapture
+cargo test -p reknot --no-default-features --features typed-binary --test typed_binary --locked
+cargo test -p reknot --no-default-features --features jit-dev --lib superseded_stages_release_lock_and_do_not_publish --locked -- --ignored --nocapture
+```
+
+`layered_typed`はKeepLoaded、Managed、Restart、中断後の復旧、初回契約拒否、生成物の再利用・
+上書き拒否・容量制限を独立したプロセスで検査します。古い編集の打ち切り後も稼働中の世代を維持し、
+後続のビルド失敗から回復できることも検査します。producerの段階別試験では、公開前の打ち切り、
+writer lockの解放、再ビルド、古くなったコンパイルエラーを確認します。`REKNOT_TYPED_JIT_PRODUCER=script`を設定すると
+従来の外部ビルダー経路も検査できます。時間の比較は[ベンチマーク](BENCHMARKS.md)を単独実行してください。
+
 ## 実験的なELF
 
 Linux x86_64 GNUで`cargo test -p reknot --no-default-features --features jit-dev --lib --locked`
@@ -252,3 +268,7 @@ cargo tree -p service_host --no-default-features --features static-logic --edges
 
 静的構成の依存ツリーに libloading・notify・旧ランタイムアダプターが含まれないことを確認します。
 既定の対象はコア3 crate です。サンプルは `-p` または `--workspace` で明示的に選びます。
+
+## 型付き二層開発
+
+[型付きJITの検証手順](TYPED_JIT.md#統合を検証する)にWindows/Linuxの実オブジェクト試験と確認範囲を記載しています。

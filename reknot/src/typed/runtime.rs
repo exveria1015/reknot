@@ -44,6 +44,20 @@ impl ModuleBuilder {
         self.max_in_flight = limit;
         self
     }
+    #[cfg(feature = "jit-dev")]
+    pub(super) fn development_copy(&self) -> Self {
+        Self {
+            module: self.module.clone(),
+            resources: self.resources.clone(),
+            environment: self.environment.clone(),
+            options: self.options.clone(),
+            max_in_flight: self.max_in_flight,
+        }
+    }
+    #[cfg(feature = "jit-dev")]
+    pub(super) fn development_budget(&self) -> crate::GenerationBudget {
+        self.options.generations.clone()
+    }
     fn environment(&self) -> Result<HandlerEnvironment, Error> {
         self.module.validate()?;
         if self.max_in_flight == 0 {
@@ -274,6 +288,19 @@ impl ModuleHost {
         router.release_retired_generations();
         Ok(generation)
     }
+
+    #[cfg(feature = "dev-tools")]
+    pub(super) unsafe fn prepare_native_copy(
+        &self,
+        copy: crate::native::PreparedLibrary,
+    ) -> Result<PreparedHandler, Error> {
+        self.0
+            .router
+            .try_borrow()
+            .map_err(|_| Error::Busy)?
+            .prepare_native_copy(copy)
+            .map_err(|e| route_error(&self.0.module.borrow(), e))
+    }
 }
 
 /// Stable application-facing entry point. `Call` and this handle are deliberately !Send.
@@ -299,7 +326,7 @@ impl<
     /// Admit immediately, then await the returned future on the same thread.
     /// This never retries the handler. Application `Result<T,E>` remains an ordinary result value.
     pub fn call(&self, input: I) -> Call<O> {
-        let raw = match encode(&input, MAX_MESSAGE_BYTES) {
+        let raw = match self.handler.format.encode(&input, MAX_MESSAGE_BYTES) {
             Ok(bytes) => self.host.call_raw(&self.spec, bytes),
             Err(error) => RawCall {
                 admission: Some(Err(error)),
@@ -307,6 +334,7 @@ impl<
         };
         Call {
             raw,
+            format: self.handler.format,
             marker: PhantomData,
         }
     }
@@ -346,6 +374,7 @@ impl Drop for ActiveCall {
 /// Drop cancels it; the host's cleanup driver must continue polling afterwards.
 pub struct Call<O> {
     raw: RawCall,
+    format: WireFormat,
     marker: PhantomData<fn() -> O>,
 }
 impl<O> Call<O> {
@@ -363,11 +392,9 @@ impl<O> Call<O> {
 impl<O: DeserializeOwned> Future for Call<O> {
     type Output = Result<O, Error>;
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        Pin::new(&mut self.raw).poll(cx).map(|result| {
-            result.and_then(|bytes| {
-                serde_json::from_slice(&bytes).map_err(|e| Error::Codec(e.to_string()))
-            })
-        })
+        Pin::new(&mut self.raw)
+            .poll(cx)
+            .map(|result| result.and_then(|bytes| self.format.decode(&bytes, MAX_MESSAGE_BYTES)))
     }
 }
 pub(super) struct RawCall {

@@ -20,9 +20,14 @@ use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
     mpsc, Arc,
 };
-use std::task::{Context, Waker};
+use std::task::{Context, Poll, Waker};
+
+#[path = "jit_development_target.rs"]
+mod target;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use target::RouterTarget;
+pub(crate) use target::{Activation, DevelopmentTarget, TargetFailure};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SourceRevision(pub u64);
@@ -67,12 +72,17 @@ pub struct LayeredDevOptions {
     pub package: String,
     /// Cargo's dylib target name (without platform prefix/suffix).
     pub support_target: String,
+    /// External script path. Empty selects the built-in Rust producer; prefer
+    /// `builtin` when no custom producer is needed.
     pub builder: PathBuf,
     pub cache_directory: PathBuf,
     pub toolchain: String,
     pub features: Vec<String>,
     pub no_default_features: bool,
     pub offline: bool,
+    /// Built-in producer only: default Cargo dev optimization for support and
+    /// dependencies (Some(1)). None inherits Cargo configuration; logic stays 0.
+    pub support_optimization: Option<u32>,
     pub additional_inputs: Vec<LayeredInput>,
     /// Enables reuse only when all build-script/include/environment inputs are
     /// known and declared. False always rechecks the foundation with Cargo.
@@ -86,6 +96,16 @@ pub struct LayeredDevOptions {
     pub managed_reload: ManagedReloadOptions,
 }
 impl LayeredDevOptions {
+    /// Use the SDK's Rust producer with Cargo/rustup and the platform linker.
+    /// No external script, PowerShell or Python installation is required.
+    pub fn builtin(
+        manifest: impl Into<PathBuf>,
+        package: impl Into<String>,
+        support_target: impl Into<String>,
+        cache: impl Into<PathBuf>,
+    ) -> Self {
+        Self::new(manifest, package, support_target, PathBuf::new(), cache)
+    }
     pub fn new(
         manifest: impl Into<PathBuf>,
         package: impl Into<String>,
@@ -103,6 +123,7 @@ impl LayeredDevOptions {
             features: Vec::new(),
             no_default_features: false,
             offline: false,
+            support_optimization: Some(1),
             additional_inputs: Vec::new(),
             declared_inputs_complete: false,
             debounce: Duration::from_millis(50),
@@ -121,6 +142,10 @@ pub enum LayeredDevState {
         revision: SourceRevision,
     },
     Superseded,
+    /// A typed Restart has paused admission while registered work finishes.
+    Restarting {
+        revision: SourceRevision,
+    },
     Activated {
         generation: u64,
         revision: SourceRevision,
@@ -190,6 +215,28 @@ struct Job {
     directory: PathBuf,
     prior: Option<(String, PathBuf)>,
     recheck: bool,
+    cancellation: Option<BuildCancellation>,
+}
+struct BuildCancellation {
+    revision: Arc<AtomicU64>,
+    refresh: Arc<AtomicBool>,
+    stop: Arc<AtomicBool>,
+}
+impl Job {
+    fn is_current(&self) -> bool {
+        self.cancellation.as_ref().is_none_or(|cancel| {
+            cancel.revision.load(Ordering::Acquire) == self.revision
+                && !cancel.refresh.load(Ordering::Acquire)
+                && !cancel.stop.load(Ordering::Acquire)
+        })
+    }
+    fn check_current(&self, stage: &'static str) -> Result<(), BuildFailure> {
+        if self.is_current() {
+            Ok(())
+        } else {
+            Err(superseded(stage))
+        }
+    }
 }
 struct Built {
     artifact: LayeredArtifact,
@@ -202,9 +249,43 @@ struct BuildOutput {
     plan: Plan,
     artifact: Result<Built, BuildFailure>,
 }
+struct Produced {
+    manifest: PathBuf,
+    captured: Vec<u8>,
+    metrics: LayeredBuildMetrics,
+}
+struct BuildAttempt {
+    plan: Plan,
+    produced: Result<Produced, BuildFailure>,
+    reused: bool,
+}
 struct BuildFailure {
     state: LayeredDevState,
     message: String,
+}
+impl From<super::builder::BuildError> for BuildFailure {
+    fn from(error: super::builder::BuildError) -> Self {
+        Self {
+            state: if error.cache_full {
+                LayeredDevState::CacheFull
+            } else {
+                LayeredDevState::BuildFailed
+            },
+            message: error.message,
+        }
+    }
+}
+fn build_failed(message: String) -> BuildFailure {
+    BuildFailure {
+        state: LayeredDevState::BuildFailed,
+        message,
+    }
+}
+fn superseded(stage: &'static str) -> BuildFailure {
+    BuildFailure {
+        state: LayeredDevState::Superseded,
+        message: format!("obsolete build stopped at {stage}"),
+    }
 }
 struct Completed {
     revision: u64,
@@ -217,9 +298,100 @@ struct PendingArtifact {
     required_bytes: Option<usize>,
 }
 
+/// Owner-thread source builds, checked COFF/ELF loading and raw Router admission.
+/// Drop stops publication without waiting for Cargo; `shutdown` joins the worker.
+pub struct LayeredDevSession {
+    core: LayeredDevCore,
+    target: RouterTarget,
+}
+impl LayeredDevSession {
+    /// # Safety
+    /// Trust this project, future edits, dependencies, build scripts and producer
+    /// to satisfy `LayeredArtifact::into_trusted` for every build.
+    pub unsafe fn start(
+        options: LayeredDevOptions,
+        resources: HostResources,
+    ) -> Result<Self, String> {
+        Self::start_inner(options, resources, false)
+    }
+    /// # Safety
+    /// In addition to `start`, every build must satisfy
+    /// `TrustedLayeredArtifact::into_managed`, including external callback return.
+    pub unsafe fn start_managed(
+        options: LayeredDevOptions,
+        resources: HostResources,
+    ) -> Result<Self, String> {
+        Self::start_inner(options, resources, true)
+    }
+    fn start_inner(
+        options: LayeredDevOptions,
+        resources: HostResources,
+        managed: bool,
+    ) -> Result<Self, String> {
+        let router_options = crate::RouterOptions {
+            generations: crate::GenerationBudget::new(options.max_router_generations)
+                .map_err(|e| e.to_string())?,
+            ..Default::default()
+        };
+        let core = LayeredDevCore::start(options, managed, router_options.generations.clone())?;
+        Ok(Self {
+            core,
+            target: RouterTarget {
+                router: None,
+                resources,
+                options: router_options,
+            },
+        })
+    }
+    pub fn router(&self) -> Option<&RequestRouter> {
+        self.target.router.as_ref()
+    }
+    pub fn router_mut(&mut self) -> Option<&mut RequestRouter> {
+        self.target.router.as_mut()
+    }
+    pub fn snapshot(&self) -> LayeredDevSnapshot {
+        self.core.snapshot(self.target.has_active())
+    }
+    /// Explicit retry/rescan; never resets the engine or attempt allowance.
+    pub fn retry(&mut self) {
+        self.core.retry();
+    }
+    pub fn reconfigure(
+        &mut self,
+        toolchain: String,
+        features: Vec<String>,
+        no_default_features: bool,
+    ) {
+        self.core
+            .reconfigure(toolchain, features, no_default_features);
+    }
+    /// Nonblocking progress. Call regularly, including while requests run.
+    pub fn poll_update(&mut self) -> Option<LayeredDevEvent> {
+        self.poll_update_with_context(&mut Context::from_waker(Waker::noop()))
+    }
+    /// Cleanup and worker notifications can wake this executor. Source/build
+    /// completion still needs periodic polling; poll owned RequestTasks separately.
+    pub fn poll_update_with_context(&mut self, cx: &mut Context<'_>) -> Option<LayeredDevEvent> {
+        self.core.poll_update(&mut self.target, cx)
+    }
+    /// Collect this session's managed images only, on the owner thread.
+    pub fn collect_retired(&mut self, options: CoffReclaimOptions) -> Option<CoffReclaimReport> {
+        self.core.collect_retired(&mut self.target, options)
+    }
+    pub fn shutdown(&mut self) -> Result<(), String> {
+        self.core.shutdown()
+    }
+    #[cfg(all(test, windows, target_arch = "x86_64", target_env = "msvc"))]
+    pub(crate) fn test_build_blocking(
+        &mut self,
+    ) -> Result<(LayeredArtifact, LayeredBuildMetrics), String> {
+        self.core.test_build_blocking()
+    }
+}
+
 /// Not Send: linking, entry, Router and collection stay on the creating thread.
 /// Drop stops publication but does not wait for Cargo. Use shutdown for a joined stop.
-pub struct LayeredDevSession {
+pub(crate) struct LayeredDevCore {
     options: LayeredDevOptions,
     environment: BTreeMap<OsString, OsString>,
     session: String,
@@ -244,45 +416,19 @@ pub struct LayeredDevSession {
     stop: Arc<AtomicBool>,
     prior: Option<(String, PathBuf)>,
     engine: Option<LayeredEngine>,
-    router: Option<RequestRouter>,
-    resources: HostResources,
+    restart_revision: Option<SourceRevision>,
     managed: bool,
-    router_options: crate::RouterOptions,
+    generations: crate::GenerationBudget,
     state: LayeredDevState,
     diagnostic: Option<String>,
     manifest: Option<PathBuf>,
     metrics: LayeredBuildMetrics,
 }
-impl LayeredDevSession {
-    /// Install source watches before the asynchronous first build.
-    ///
-    /// # Safety
-    /// Trust this project, its future edits, dependencies, build scripts and the
-    /// selected builder to satisfy LayeredArtifact::into_trusted for every build.
-    /// This continuing obligation does not verify future code. Default KeepLoaded
-    /// does not accept the additional managed lifetime contract.
-    pub unsafe fn start(
-        options: LayeredDevOptions,
-        resources: HostResources,
-    ) -> Result<Self, String> {
-        Self::start_inner(options, resources, false)
-    }
-    /// Opt in to collection for this project and all future edits.
-    ///
-    /// # Safety
-    /// In addition to start, every build must satisfy
-    /// TrustedLayeredArtifact::into_managed, including each external adapter's
-    /// complete-return contract. A manifest cannot enable this mode.
-    pub unsafe fn start_managed(
-        options: LayeredDevOptions,
-        resources: HostResources,
-    ) -> Result<Self, String> {
-        Self::start_inner(options, resources, true)
-    }
-    fn start_inner(
+impl LayeredDevCore {
+    pub(crate) fn start(
         mut options: LayeredDevOptions,
-        resources: HostResources,
         managed: bool,
+        generations: crate::GenerationBudget,
     ) -> Result<Self, String> {
         if !cfg!(any(
             all(windows, target_arch = "x86_64", target_env = "msvc"),
@@ -300,13 +446,17 @@ impl LayeredDevSession {
                 .canonicalize()
                 .map_err(|e| e.to_string())?,
         );
-        options.builder = normalize(&options.builder.canonicalize().map_err(|e| e.to_string())?);
+        if !options.builder.as_os_str().is_empty() {
+            options.builder =
+                normalize(&options.builder.canonicalize().map_err(|e| e.to_string())?);
+        }
         options.cache_directory =
             normalize(&std::path::absolute(&options.cache_directory).map_err(|e| e.to_string())?);
         for input in &mut options.additional_inputs {
             input.path = normalize(&std::path::absolute(&input.path).map_err(|e| e.to_string())?);
         }
         if options.max_cache_bytes == 0
+            || options.max_router_generations == 0
             || options.package.is_empty()
             || options.support_target.is_empty()
             || (managed
@@ -315,11 +465,6 @@ impl LayeredDevSession {
         {
             return Err("invalid development configuration".into());
         }
-        let router_options = crate::RouterOptions {
-            generations: crate::GenerationBudget::new(options.max_router_generations)
-                .map_err(|e| e.to_string())?,
-            ..Default::default()
-        };
         let environment = std::env::vars_os().collect();
         let plan = discover(&options, &environment)?;
         let session = format!(
@@ -399,27 +544,20 @@ impl LayeredDevSession {
             stop,
             prior: None,
             engine: None,
-            router: None,
-            resources,
+            restart_revision: None,
             managed,
-            router_options,
+            generations,
             state: LayeredDevState::Debouncing,
             diagnostic: None,
             manifest: None,
             metrics: Default::default(),
         })
     }
-    pub fn router(&self) -> Option<&RequestRouter> {
-        self.router.as_ref()
-    }
-    pub fn router_mut(&mut self) -> Option<&mut RequestRouter> {
-        self.router.as_mut()
-    }
-    pub fn snapshot(&self) -> LayeredDevSnapshot {
+    pub(crate) fn snapshot(&self, has_active_generation: bool) -> LayeredDevSnapshot {
         LayeredDevSnapshot {
             state: self.state.clone(),
             revision: SourceRevision(self.revision.load(Ordering::Acquire)),
-            has_active_generation: self.router.is_some(),
+            has_active_generation,
             load_attempts: self.engine.as_ref().map_or(0, LayeredEngine::load_attempts),
             keep_loaded_attempts: self
                 .engine
@@ -477,26 +615,35 @@ impl LayeredDevSession {
         self.retry();
         Ok(())
     }
-    /// Nonblocking progress for a periodically polled host loop. Managed sessions
-    /// also maintain their retired images. Use poll_update_with_context when
-    /// cleanup notifications should wake the host executor.
-    pub fn poll_update(&mut self) -> Option<LayeredDevEvent> {
-        self.poll_update_with_context(&mut Context::from_waker(Waker::noop()))
-    }
-
-    /// Like poll_update, with a host Waker for managed cleanup and workers.
-    /// Source/build completion still needs periodic polling. Externally owned
-    /// RequestTasks must be polled and dropped by their own executor.
-    pub fn poll_update_with_context(&mut self, cx: &mut Context<'_>) -> Option<LayeredDevEvent> {
+    pub(crate) fn poll_update<T: DevelopmentTarget>(
+        &mut self,
+        target: &mut T,
+        cx: &mut Context<'_>,
+    ) -> Option<LayeredDevEvent> {
+        target.maintain(cx, self.managed);
         if self.stop.load(Ordering::Acquire) {
             return None;
         }
         if self.managed {
-            let _ = crate::poll_cancelled_requests(cx);
-            if let Some(router) = &mut self.router {
-                let _ = router.poll_workers(cx);
-            }
-            self.collect_retired(CoffReclaimOptions::default());
+            self.collect_retired(target, CoffReclaimOptions::default());
+        }
+        if let Some(revision) = self.restart_revision {
+            return match target.poll_restart(cx) {
+                Poll::Pending => None,
+                Poll::Ready(result) => {
+                    self.restart_revision = None;
+                    match result {
+                        Ok(generation) => self.event(
+                            LayeredDevState::Activated {
+                                generation,
+                                revision,
+                            },
+                            None,
+                        ),
+                        Err(error) => self.reject_target(error),
+                    }
+                }
+            };
         }
         if let Ok(message) = self.watch_errors.try_recv() {
             self.refresh.store(true, Ordering::Release);
@@ -523,7 +670,14 @@ impl LayeredDevSession {
                 }
                 self.running = None;
                 if self.stale(done.revision) {
-                    return self.event(LayeredDevState::Superseded, None);
+                    let error = match &done.result {
+                        Err(error) => Some(error),
+                        Ok(output) => output.artifact.as_ref().err(),
+                    };
+                    let diagnostic = error
+                        .filter(|error| error.state == LayeredDevState::Superseded)
+                        .map(|error| error.message.clone());
+                    return self.event(LayeredDevState::Superseded, diagnostic);
                 }
                 let output = match done.result {
                     Ok(output) => output,
@@ -577,7 +731,7 @@ impl LayeredDevSession {
             if self.stale(pending.revision) {
                 return self.event(LayeredDevState::Superseded, None);
             }
-            if let Some((state, message)) = self.admission_block(pending.required_bytes) {
+            if let Some((state, message)) = self.admission_block(target, pending.required_bytes) {
                 self.pending = Some(pending);
                 return self.changed_event(state, message);
             }
@@ -601,7 +755,7 @@ impl LayeredDevSession {
             }
             // Exact page requirement is known before allocation/entry. Keep one
             // captured candidate while waiting; never rebuild it on every poll.
-            if let Some((state, message)) = self.admission_block(pending.required_bytes) {
+            if let Some((state, message)) = self.admission_block(target, pending.required_bytes) {
                 self.pending = Some(pending);
                 return self.changed_event(state, message);
             }
@@ -623,33 +777,23 @@ impl LayeredDevSession {
                 Ok(h) => h,
                 Err(e) => return self.reject(e),
             };
-            let generation = if let Some(router) = &mut self.router {
-                let candidate = match router.prepare_loaded(loaded) {
-                    Ok(c) => c,
-                    Err(e) => return self.reject_route(e),
-                };
-                if self.stale(pending.revision) {
-                    return self.event(LayeredDevState::Superseded, None);
+            let candidate = match target.prepare(loaded) {
+                Ok(candidate) => candidate,
+                Err(error) => return self.reject_target(error),
+            };
+            if self.stale(pending.revision) {
+                return self.event(LayeredDevState::Superseded, None);
+            }
+            let generation = match target.activate(candidate) {
+                Ok(Activation::Ready(generation)) => generation,
+                #[cfg(feature = "typed")]
+                Ok(Activation::Restarting) => {
+                    let revision = SourceRevision(pending.revision);
+                    self.restart_revision = Some(revision);
+                    self.metrics.owner_ms = start.elapsed().as_secs_f64() * 1000.0;
+                    return self.event(LayeredDevState::Restarting { revision }, None);
                 }
-                match self.router.as_mut().unwrap().activate(candidate) {
-                    Ok(g) => g,
-                    Err(e) => return self.event(LayeredDevState::Rejected, Some(e.to_string())),
-                }
-            } else {
-                let router = match RequestRouter::from_loaded_with_options(
-                    loaded,
-                    self.resources.clone(),
-                    self.router_options.clone(),
-                ) {
-                    Ok(r) => r,
-                    Err(e) => return self.reject_route(e),
-                };
-                if self.stale(pending.revision) {
-                    return self.event(LayeredDevState::Superseded, None);
-                }
-                let g = router.generation();
-                self.router = Some(router);
-                g
+                Err(error) => return self.reject_target(error),
             };
             self.metrics.owner_ms = start.elapsed().as_secs_f64() * 1000.0;
             return self.event(
@@ -664,7 +808,7 @@ impl LayeredDevSession {
             && self.submitted != revision
             && self.changed_at.elapsed() >= self.options.debounce
         {
-            if let Some((state, message)) = self.admission_block(None) {
+            if let Some((state, message)) = self.admission_block(target, None) {
                 return self.changed_event(state, message);
             }
             let id = self.next_job;
@@ -686,6 +830,11 @@ impl LayeredDevSession {
                 directory: self.directory.join("jobs").join(id.to_string()),
                 prior: self.prior.clone(),
                 recheck: self.foundation_dirty.swap(false, Ordering::AcqRel),
+                cancellation: Some(BuildCancellation {
+                    revision: self.revision.clone(),
+                    refresh: self.refresh.clone(),
+                    stop: self.stop.clone(),
+                }),
             };
             if self.tx.as_ref().unwrap().try_send(job).is_err() {
                 return self.event(
@@ -717,11 +866,13 @@ impl LayeredDevSession {
         }
     }
 
-    fn wait_for_retirement(&self, image: CoffImageId) -> (LayeredDevState, String) {
+    fn wait_for_retirement(
+        &self,
+        target: &impl DevelopmentTarget,
+        image: CoffImageId,
+    ) -> (LayeredDevState, String) {
         if self.options.managed_reload.pressure == ManagedPressure::CancelOldest {
-            if let Some(router) = &self.router {
-                router.cancel_retired_image(image);
-            }
+            target.cancel_retired(image);
         }
         (LayeredDevState::WaitingForRetirement { image },
          format!("waiting for image {} ({:?}); requests must be polled/dropped and cleanup joined before collection",
@@ -730,6 +881,7 @@ impl LayeredDevSession {
 
     fn admission_block(
         &mut self,
+        target: &impl DevelopmentTarget,
         required_bytes: Option<usize>,
     ) -> Option<(LayeredDevState, String)> {
         if !self.managed {
@@ -741,15 +893,16 @@ impl LayeredDevSession {
                 return Some((LayeredDevState::BudgetExhausted,
                     format!("KeepLoaded load limit reached ({used}); restart required to continue updating")));
             }
-            let budget = &self.router_options.generations;
-            if budget.used() >= budget.limit() {
+            let budget = &self.generations;
+            let limit = budget.limit().min(self.options.max_router_generations);
+            if budget.used() >= limit {
                 return Some((LayeredDevState::BudgetExhausted,
                     format!("Router KeepLoaded limit reached ({}); restart required to continue updating", budget.used())));
             }
         }
         let snapshot = jit_retention_snapshot();
         self.prune_images(&snapshot);
-        let active = self.router.as_ref().and_then(RequestRouter::jit_image_id);
+        let active = target.active_image();
         let oldest = self
             .live_images
             .iter()
@@ -774,7 +927,7 @@ impl LayeredDevSession {
             }
             if self.live_images.len() >= self.options.managed_reload.max_live_generations {
                 if let Some(id) = oldest {
-                    return Some(self.wait_for_retirement(id));
+                    return Some(self.wait_for_retirement(target, id));
                 }
             }
         }
@@ -788,7 +941,7 @@ impl LayeredDevSession {
         {
             if self.managed {
                 if let Some(id) = oldest {
-                    return Some(self.wait_for_retirement(id));
+                    return Some(self.wait_for_retirement(target, id));
                 }
             }
             return Some((LayeredDevState::RetentionBlocked {
@@ -816,26 +969,25 @@ impl LayeredDevSession {
         };
         self.event(state, Some(error.to_string()))
     }
-    fn reject_route(&mut self, error: crate::RouteError) -> Option<LayeredDevEvent> {
-        let state = if matches!(
-            error,
-            crate::RouteError::GenerationLimit { .. } | crate::RouteError::GenerationExhausted
-        ) {
+    fn reject_target(&mut self, error: TargetFailure) -> Option<LayeredDevEvent> {
+        let state = if error.budget {
             LayeredDevState::BudgetExhausted
         } else {
             LayeredDevState::Rejected
         };
-        self.event(state, Some(error.to_string()))
+        self.event(state, Some(error.message))
     }
     /// Release completed Router bookkeeping and collect this session's managed
     /// images only. Also called by poll_update; other controllers are not collected.
-    pub fn collect_retired(&mut self, options: CoffReclaimOptions) -> Option<CoffReclaimReport> {
+    pub(crate) fn collect_retired(
+        &mut self,
+        target: &mut impl DevelopmentTarget,
+        options: CoffReclaimOptions,
+    ) -> Option<CoffReclaimReport> {
         if !self.managed {
             return None;
         }
-        if let Some(router) = &mut self.router {
-            router.release_retired_generations();
-        }
+        target.release_retired();
         let report = collect_selected_jit(options, &self.live_images);
         self.reclamation = report.clone();
         self.prune_images(&jit_retention_snapshot());
@@ -874,6 +1026,7 @@ impl LayeredDevSession {
             directory: self.directory.join("jobs").join(id.to_string()),
             prior: self.prior.clone(),
             recheck: false,
+            cancellation: None,
         })
         .map_err(|e| e.message)?;
         let built = output.artifact.map_err(|e| e.message)?;
@@ -881,21 +1034,28 @@ impl LayeredDevSession {
         Ok((built.artifact, built.metrics))
     }
 }
-impl Drop for LayeredDevSession {
+impl Drop for LayeredDevCore {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Release);
         self.tx.take();
     }
 }
 
-fn command(program: &str, env: &BTreeMap<OsString, OsString>, manifest: &Path) -> Command {
+pub(super) fn command(
+    program: impl AsRef<std::ffi::OsStr>,
+    env: &BTreeMap<OsString, OsString>,
+    manifest: &Path,
+) -> Command {
     let mut c = Command::new(program);
     c.env_clear()
         .envs(env)
         .current_dir(manifest.parent().unwrap());
     c
 }
-fn capture(mut command: Command, limit: usize) -> Result<(bool, Vec<u8>, String), String> {
+pub(super) fn capture(
+    mut command: Command,
+    limit: usize,
+) -> Result<(bool, Vec<u8>, String), String> {
     command
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -936,7 +1096,7 @@ fn capture(mut command: Command, limit: usize) -> Result<(bool, Vec<u8>, String)
 fn hash(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
-fn read_limit(path: &Path, limit: usize) -> Result<Vec<u8>, String> {
+pub(super) fn read_limit(path: &Path, limit: usize) -> Result<Vec<u8>, String> {
     let mut bytes = Vec::new();
     File::open(path)
         .map_err(|e| e.to_string())?
@@ -1025,7 +1185,22 @@ fn discover(
     if !ok {
         return Err(error);
     }
-    let m: Metadata = serde_json::from_slice(&metadata).map_err(|e| e.to_string())?;
+    let mut rustc = command("rustup", environment, &options.manifest_path);
+    rustc.args(["run", &options.toolchain, "rustc", "-vV"]);
+    let (ok, compiler, error) = capture(rustc, 64 * 1024)?;
+    if !ok {
+        return Err(error);
+    }
+    plan_from_metadata(options, environment, &metadata, &compiler)
+}
+
+fn plan_from_metadata(
+    options: &LayeredDevOptions,
+    environment: &BTreeMap<OsString, OsString>,
+    metadata: &[u8],
+    compiler: &[u8],
+) -> Result<Plan, String> {
+    let m: Metadata = serde_json::from_slice(metadata).map_err(|e| e.to_string())?;
     let logic = m
         .packages
         .iter()
@@ -1088,8 +1263,10 @@ fn discover(
     inputs.files.extend([
         m.workspace_root.join("Cargo.toml"),
         m.workspace_root.join("Cargo.lock"),
-        options.builder.clone(),
     ]);
+    if !options.builder.as_os_str().is_empty() {
+        inputs.files.insert(options.builder.clone());
+    }
     for dir in options.manifest_path.parent().unwrap().ancestors() {
         inputs.files.extend([
             dir.join(".cargo/config"),
@@ -1149,7 +1326,10 @@ fn discover(
     // Hash declared foundation contents, resolver, compiler, builder and the exact
     // child environment. No Cargo-private .fingerprint format is part of this key.
     let mut hasher = Sha256::new();
-    hasher.update(&metadata);
+    if options.builder.as_os_str().is_empty() {
+        hasher.update(b"reknot-rust-builder-v1");
+    }
+    hasher.update(metadata);
     hasher.update(options.toolchain.as_bytes());
     for (k, v) in environment {
         hasher.update((k.len() as u64).to_le_bytes());
@@ -1157,13 +1337,7 @@ fn discover(
         hasher.update((v.len() as u64).to_le_bytes());
         hasher.update(v.as_encoded_bytes());
     }
-    let mut rustc = command("rustup", environment, &options.manifest_path);
-    rustc.args(["run", &options.toolchain, "rustc", "-vV"]);
-    let (ok, compiler, error) = capture(rustc, 64 * 1024)?;
-    if !ok {
-        return Err(error);
-    }
-    hasher.update(&compiler);
+    hasher.update(compiler);
     let mut files = inputs.files.clone();
     let mut seen = HashSet::new();
     fn walk(
@@ -1217,40 +1391,124 @@ fn discover(
 
 fn build(job: Job) -> Result<BuildOutput, BuildFailure> {
     let start = Instant::now();
-    let plan = discover(&job.options, &job.environment).map_err(|message| BuildFailure {
-        state: LayeredDevState::BuildFailed,
-        message,
-    })?;
-    let artifact = build_artifact(job, &plan, start);
-    Ok(BuildOutput { plan, artifact })
-}
-
-fn build_artifact(job: Job, plan: &Plan, start: Instant) -> Result<Built, BuildFailure> {
-    fn failed(message: String) -> BuildFailure {
-        BuildFailure {
-            state: LayeredDevState::BuildFailed,
-            message,
+    job.check_current("before_preparation")?;
+    let mut attempt = build_attempt(&job, "first", job.recheck)?;
+    // A failed reuse gets one fresh preparation, including metadata and Plan.
+    // Keep the last successful discovery even if preparing the retry fails.
+    if attempt.reused
+        && attempt.produced.as_ref().is_err_and(|e| {
+            !matches!(
+                e.state,
+                LayeredDevState::CacheFull | LayeredDevState::Superseded
+            )
+        })
+        && job.is_current()
+    {
+        match build_attempt(&job, "recheck", true) {
+            Ok(rechecked) => attempt = rechecked,
+            Err(error) => attempt.produced = Err(error),
         }
     }
-    let reuse = if !job.recheck && job.options.declared_inputs_complete {
-        job.prior
-            .as_ref()
-            .filter(|(key, _)| key == &plan.foundation_key)
-            .map(|(_, p)| p)
-    } else {
-        None
-    };
-    let run = |reuse: Option<&Path>,
-               suffix: &str|
-     -> Result<(PathBuf, Vec<u8>, LayeredBuildMetrics), BuildFailure> {
-        let dir = job.directory.join(suffix);
-        fs::create_dir_all(&dir).map_err(|e| failed(e.to_string()))?;
-        let output = dir.join(if cfg!(target_os = "linux") {
+    let artifact = attempt.produced.and_then(|produced| {
+        job.check_current("before_artifact_read")?;
+        finish_build(&job, &attempt.plan, produced, start)
+    });
+    Ok(BuildOutput {
+        plan: attempt.plan,
+        artifact,
+    })
+}
+
+fn build_attempt(job: &Job, suffix: &str, recheck: bool) -> Result<BuildAttempt, BuildFailure> {
+    job.check_current("before_preparation")?;
+    let output = job
+        .directory
+        .join(suffix)
+        .join(if cfg!(target_os = "linux") {
             "logic.o"
         } else {
             "logic.obj"
         });
-        let receipt = dir.join("build-result.json");
+    let mut options = super::builder::BuildOptions::new(
+        &job.options.manifest_path,
+        &job.options.package,
+        &job.options.support_target,
+        &job.options.cache_directory,
+        &output,
+    );
+    options.toolchain = job.options.toolchain.clone();
+    options.features = job.options.features.clone();
+    options.no_default_features = job.options.no_default_features;
+    options.offline = job.options.offline;
+    options.support_optimization = job.options.support_optimization;
+    options.max_cache_bytes = job.options.max_cache_bytes;
+    let prepared = if job.options.builder.as_os_str().is_empty() {
+        Some(
+            super::builder::prepare_with_environment(&options, &job.environment)
+                .map_err(BuildFailure::from)?,
+        )
+    } else {
+        None
+    };
+    job.check_current("after_preparation")?;
+    let plan = match &prepared {
+        Some(prepared) => plan_from_metadata(
+            &job.options,
+            prepared.environment(),
+            prepared.metadata(),
+            prepared.compiler_info(),
+        ),
+        None => discover(&job.options, &job.environment),
+    }
+    .map_err(build_failed)?;
+    let reuse = if !recheck && job.options.declared_inputs_complete {
+        job.prior
+            .as_ref()
+            .filter(|(key, _)| key == &plan.foundation_key)
+            .map(|(_, path)| path.as_path())
+    } else {
+        None
+    };
+    let reused = reuse.is_some();
+    let produced = produce(job, &plan, &output, prepared, reuse);
+    Ok(BuildAttempt {
+        plan,
+        produced,
+        reused,
+    })
+}
+
+fn produce(
+    job: &Job,
+    plan: &Plan,
+    output: &Path,
+    prepared: Option<super::builder::PreparedBuild<'_>>,
+    reuse: Option<&Path>,
+) -> Result<Produced, BuildFailure> {
+    job.check_current("after_plan")?;
+    let dir = output.parent().expect("job output has a directory");
+    fs::create_dir_all(dir).map_err(|e| build_failed(e.to_string()))?;
+    let receipt = dir.join("build-result.json");
+    let (ok, diagnostic, value) = if let Some(prepared) = prepared {
+        let result = match prepared
+            .build_while_current(reuse, &|_| job.is_current())
+            .map_err(BuildFailure::from)?
+        {
+            super::builder::BuildOutcome::Built(result) => result,
+            super::builder::BuildOutcome::Superseded(stage) => return Err(superseded(stage)),
+        };
+        let mut value = serde_json::to_value(result).map_err(|e| build_failed(e.to_string()))?;
+        value["version"] = 1.into();
+        value["status"] = "Built".into();
+        value["session"] = job.session.clone().into();
+        value["revision"] = job.revision.into();
+        value["job"] = job.id.into();
+        value["foundation_build_key"] = plan.foundation_key.clone().into();
+        File::create_new(&receipt)
+            .and_then(|mut f| f.write_all(serde_json::to_vec_pretty(&value).unwrap().as_slice()))
+            .map_err(|e| build_failed(e.to_string()))?;
+        (true, String::new(), value)
+    } else {
         let mut c = command(
             if cfg!(target_os = "linux") {
                 "python3"
@@ -1284,7 +1542,7 @@ fn build_artifact(job: Job, plan: &Plan, start: Instant) -> Result<Built, BuildF
                     }),
             )
             .arg("-Output")
-            .arg(&output)
+            .arg(output)
             .arg("-Toolchain")
             .arg(&job.options.toolchain)
             .arg("-ReceiptPath")
@@ -1313,58 +1571,67 @@ fn build_artifact(job: Job, plan: &Plan, start: Instant) -> Result<Built, BuildF
         if let Some(prior) = reuse {
             c.arg("-FoundationManifest").arg(prior);
         }
-        let (ok, _, diagnostic) = capture(c, 256 * 1024).map_err(failed)?;
+        let (ok, _, diagnostic) = capture(c, 256 * 1024).map_err(build_failed)?;
         let value: serde_json::Value = serde_json::from_slice(
-            &read_limit(&receipt, 256 * 1024).map_err(|e| failed(format!("{e}\n{diagnostic}")))?,
+            &read_limit(&receipt, 256 * 1024)
+                .map_err(|e| build_failed(format!("{e}\n{diagnostic}")))?,
         )
-        .map_err(|e| failed(e.to_string()))?;
-        if value["version"] != 1
-            || value["session"] != job.session
-            || value["revision"] != job.revision
-            || value["job"] != job.id
-        {
-            return Err(failed(
-                "producer receipt does not match submitted job".into(),
-            ));
-        }
-        if !ok || value["status"] != "Built" {
-            return Err(BuildFailure {
-                state: if value["status"] == "CacheFull" {
-                    LayeredDevState::CacheFull
-                } else {
-                    LayeredDevState::BuildFailed
-                },
-                message: format!("{}\n{diagnostic}", value["message"]),
-            });
-        }
-        let manifest = output.with_extension(if cfg!(target_os = "linux") {
-            "o.json"
-        } else {
-            "obj.json"
-        });
-        let captured = read_limit(&manifest, 256 * 1024).map_err(failed)?;
-        if value["manifest_sha256"] != hash(&captured) {
-            return Err(BuildFailure {
-                state: LayeredDevState::Rejected,
-                message: "manifest differs from build receipt".into(),
-            });
-        }
-        Ok((
-            manifest,
-            captured,
-            LayeredBuildMetrics {
-                build_ms: value["build_ms"].as_f64().unwrap_or(0.0),
-                lock_wait_ms: value["lock_wait_ms"].as_f64().unwrap_or(0.0),
-                ..Default::default()
+        .map_err(|e| build_failed(e.to_string()))?;
+        (ok, diagnostic, value)
+    };
+    if value["version"] != 1
+        || value["session"] != job.session
+        || value["revision"] != job.revision
+        || value["job"] != job.id
+    {
+        return Err(build_failed(
+            "producer receipt does not match submitted job".into(),
+        ));
+    }
+    if !ok || value["status"] != "Built" {
+        return Err(BuildFailure {
+            state: if value["status"] == "CacheFull" {
+                LayeredDevState::CacheFull
+            } else {
+                LayeredDevState::BuildFailed
             },
-        ))
-    };
-    // A reuse failure is not diagnosed by stderr wording. Retry the SAME revision
-    // once with a full foundation check; never publish the failed attempt.
-    let (manifest, captured, mut metrics) = match run(reuse.map(PathBuf::as_path), "first") {
-        Err(e) if reuse.is_some() && e.state != LayeredDevState::CacheFull => run(None, "recheck")?,
-        other => other?,
-    };
+            message: format!("{}\n{diagnostic}", value["message"]),
+        });
+    }
+    let manifest = output.with_extension(if cfg!(target_os = "linux") {
+        "o.json"
+    } else {
+        "obj.json"
+    });
+    let captured = read_limit(&manifest, 256 * 1024).map_err(build_failed)?;
+    if value["manifest_sha256"] != hash(&captured) {
+        return Err(BuildFailure {
+            state: LayeredDevState::Rejected,
+            message: "manifest differs from build receipt".into(),
+        });
+    }
+    Ok(Produced {
+        manifest,
+        captured,
+        metrics: LayeredBuildMetrics {
+            build_ms: value["build_ms"].as_f64().unwrap_or(0.0),
+            lock_wait_ms: value["lock_wait_ms"].as_f64().unwrap_or(0.0),
+            ..Default::default()
+        },
+    })
+}
+
+fn finish_build(
+    job: &Job,
+    plan: &Plan,
+    produced: Produced,
+    start: Instant,
+) -> Result<Built, BuildFailure> {
+    let Produced {
+        manifest,
+        captured,
+        mut metrics,
+    } = produced;
     let read = Instant::now();
     let artifact =
         LayeredArtifact::from_manifest_bytes(&captured, job.options.limits.load.max_object_bytes)
@@ -1379,7 +1646,7 @@ fn build_artifact(job: Job, plan: &Plan, start: Instant) -> Result<Built, BuildF
         "manifest_sha256":hash(&captured),"metrics":metrics});
     File::create_new(job.directory.join("build-receipt.json"))
         .and_then(|mut f| f.write_all(serde_json::to_string_pretty(&receipt).unwrap().as_bytes()))
-        .map_err(|e| failed(e.to_string()))?;
+        .map_err(|e| build_failed(e.to_string()))?;
     Ok(Built {
         artifact,
         manifest,

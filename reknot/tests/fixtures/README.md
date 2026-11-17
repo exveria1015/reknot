@@ -109,3 +109,14 @@ The edit-latency test compares the same producer/input-discovery pipeline on a
 worker and synchronously, with a warm Cargo target, 50 ms debounce and 5 ms owner
 polling. It records save-to-first-new-response and the longest old-response gap;
 three samples per mode are descriptive measurements, not a latency guarantee.
+
+`jit_typed_logic.rs` is compiled through the real COFF/ELF producer by
+`layered_typed`. A typed support dylib re-exports the SDK; isolated processes verify
+KeepLoaded/Managed, typed contract diagnostics, stable calls/clients, failed-build
+recovery, foundation changes and cooperative worker Restart with checkpoints.
+See [typed JIT development](../../../docs/TYPED_JIT.md#verify-the-integration).
+
+The layered typed fixture also runs with `typed-binary` on host/support. The test
+selects MessagePack in the same declarations and checks both worker and ordinary
+call results. `layered_typed` uses the built-in Rust producer by default; set
+`REKNOT_TYPED_JIT_PRODUCER=script` to exercise the legacy producer path.

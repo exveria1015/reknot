@@ -1,0 +1,403 @@
+{
+  "arch": "x86_64",
+  "benchmark_version": 1,
+  "boundary": {
+    "host": "release; resident callbacks; no DLL load or I/O; includes clone, encoding, routing, decoding, verification and cleanup",
+    "rows": [
+      {
+        "float_count": 1,
+        "iterations_per_batch": 1000,
+        "json_batches_us": [
+          2.4344,
+          2.4751,
+          2.7415,
+          2.4711999999999996,
+          2.494,
+          2.7399,
+          2.6667,
+          3.5405,
+          2.6752,
+          2.4706,
+          2.5366,
+          2.4731000000000005,
+          2.4676,
+          4.25,
+          4.919899999999999
+        ],
+        "json_bytes": 29,
+        "json_us_per_call": {
+          "max": 4.919899999999999,
+          "median": 2.5366,
+          "min": 2.4344,
+          "n": 15,
+          "p95": 4.919899999999999
+        },
+        "messagepack_batches_us": [
+          2.2804,
+          2.4749,
+          2.3031,
+          2.2934,
+          2.3135,
+          2.5216999999999996,
+          2.508,
+          2.601,
+          2.3072000000000004,
+          2.3088,
+          2.3175,
+          2.3241,
+          2.314,
+          2.3108999999999997,
+          4.7505999999999995
+        ],
+        "messagepack_bytes": 21,
+        "messagepack_us_per_call": {
+          "max": 4.7505999999999995,
+          "median": 2.314,
+          "min": 2.2804,
+          "n": 15,
+          "p95": 4.7505999999999995
+        }
+      },
+      {
+        "float_count": 64,
+        "iterations_per_batch": 1000,
+        "json_batches_us": [
+          7.930299999999999,
+          8.0208,
+          7.7475,
+          7.8408,
+          7.8664000000000005,
+          8.0551,
+          8.045300000000001,
+          8.195799999999998,
+          7.9849,
+          8.6396,
+          9.659600000000001,
+          8.548200000000001,
+          8.5373,
+          8.5263,
+          9.1113
+        ],
+        "json_bytes": 431,
+        "json_us_per_call": {
+          "max": 9.659600000000001,
+          "median": 8.0551,
+          "min": 7.7475,
+          "n": 15,
+          "p95": 9.659600000000001
+        },
+        "messagepack_batches_us": [
+          4.9535,
+          4.9285,
+          5.0346,
+          4.905,
+          5.1999,
+          5.193,
+          5.9994000000000005,
+          5.0913,
+          5.1563,
+          5.5583,
+          5.5737,
+          6.375,
+          5.4887,
+          5.5630999999999995,
+          5.4843
+        ],
+        "messagepack_bytes": 338,
+        "messagepack_us_per_call": {
+          "max": 6.375,
+          "median": 5.1999,
+          "min": 4.905,
+          "n": 15,
+          "p95": 6.375
+        }
+      },
+      {
+        "float_count": 4096,
+        "iterations_per_batch": 100,
+        "json_batches_us": [
+          338.899,
+          360.014,
+          295.844,
+          317.939,
+          307.652,
+          299.95099999999996,
+          302.638,
+          296.092,
+          300.153,
+          298.134,
+          305.117,
+          309.589,
+          306.845,
+          299.24800000000005,
+          296.633
+        ],
+        "json_bytes": 32447,
+        "json_us_per_call": {
+          "max": 360.014,
+          "median": 302.638,
+          "min": 295.844,
+          "n": 15,
+          "p95": 360.014
+        },
+        "messagepack_batches_us": [
+          160.175,
+          149.97,
+          149.499,
+          143.651,
+          144.142,
+          143.66,
+          141.964,
+          142.892,
+          137.108,
+          137.835,
+          140.09,
+          138.32,
+          140.157,
+          141.977,
+          145.224
+        ],
+        "messagepack_bytes": 20498,
+        "messagepack_us_per_call": {
+          "max": 160.175,
+          "median": 142.892,
+          "min": 137.108,
+          "n": 15,
+          "p95": 160.175
+        }
+      }
+    ],
+    "unit": "us per complete typed echo call (batch average)",
+    "warmup_batches": 2
+  },
+  "edit": {
+    "debounce_ms": 50,
+    "fixture": "single typed String handler; same body; native links SDK into cdylib; JIT uses resident SDK support dylib",
+    "jit": {
+      "max": 861.0694,
+      "median": 801.5193,
+      "min": 763.8004000000001,
+      "n": 18,
+      "p95": 861.0694
+    },
+    "native": {
+      "max": 705.9316,
+      "median": 655.2928999999999,
+      "min": 646.9463,
+      "n": 18,
+      "p95": 705.9316
+    },
+    "order": [
+      "native",
+      "jit",
+      "jit",
+      "native"
+    ],
+    "poll_ms": 1,
+    "profile": "dev opt=0 debug=0 codegen-units=1",
+    "runs": [
+      {
+        "backend": "native",
+        "edit_to_response_ms": [
+          664.5980000000001,
+          667.4375,
+          660.649,
+          666.793,
+          665.804,
+          705.9316,
+          660.8691,
+          654.7819999999999,
+          655.2928999999999
+        ],
+        "initial_ms": 8172.6247,
+        "jit_phases_ms": []
+      },
+      {
+        "backend": "jit",
+        "edit_to_response_ms": [
+          763.8004000000001,
+          785.0958,
+          798.6122,
+          785.6898,
+          796.6981,
+          801.5193,
+          801.8984,
+          843.9626999999999,
+          820.7795
+        ],
+        "initial_ms": 8960.252,
+        "jit_phases_ms": [
+          {
+            "artifact_read_ms": 0.5,
+            "build_ms": 573.0193999999999,
+            "lock_wait_ms": 0.1084,
+            "owner_ms": 2.0383,
+            "worker_ms": 709.5827999999999
+          },
+          {
+            "artifact_read_ms": 0.4814,
+            "build_ms": 593.9645,
+            "lock_wait_ms": 0.0824,
+            "owner_ms": 2.6933,
+            "worker_ms": 728.8838
+          },
+          {
+            "artifact_read_ms": 0.507,
+            "build_ms": 597.6745999999999,
+            "lock_wait_ms": 0.0817,
+            "owner_ms": 2.5519000000000003,
+            "worker_ms": 742.0609000000001
+          },
+          {
+            "artifact_read_ms": 0.4477,
+            "build_ms": 590.7835,
+            "lock_wait_ms": 0.0821,
+            "owner_ms": 2.3427,
+            "worker_ms": 729.4116
+          },
+          {
+            "artifact_read_ms": 0.4597,
+            "build_ms": 601.112,
+            "lock_wait_ms": 0.0841,
+            "owner_ms": 2.313,
+            "worker_ms": 741.7977
+          },
+          {
+            "artifact_read_ms": 0.5146000000000001,
+            "build_ms": 607.0256,
+            "lock_wait_ms": 0.0833,
+            "owner_ms": 2.6771,
+            "worker_ms": 746.4232
+          },
+          {
+            "artifact_read_ms": 0.5395000000000001,
+            "build_ms": 602.7007,
+            "lock_wait_ms": 0.1091,
+            "owner_ms": 2.038,
+            "worker_ms": 746.8199
+          },
+          {
+            "artifact_read_ms": 0.5038,
+            "build_ms": 647.754,
+            "lock_wait_ms": 0.0836,
+            "owner_ms": 2.2104,
+            "worker_ms": 787.7572
+          },
+          {
+            "artifact_read_ms": 0.5484,
+            "build_ms": 625.4532,
+            "lock_wait_ms": 0.0832,
+            "owner_ms": 1.9452,
+            "worker_ms": 765.0851
+          }
+        ]
+      },
+      {
+        "backend": "jit",
+        "edit_to_response_ms": [
+          783.5494,
+          792.8244,
+          775.4023,
+          786.6887,
+          861.0694,
+          813.1862,
+          805.5124999999999,
+          824.1961,
+          816.2187
+        ],
+        "initial_ms": 9058.2036,
+        "jit_phases_ms": [
+          {
+            "artifact_read_ms": 0.5493,
+            "build_ms": 588.0818,
+            "lock_wait_ms": 0.082,
+            "owner_ms": 2.3211,
+            "worker_ms": 728.4415
+          },
+          {
+            "artifact_read_ms": 0.4574,
+            "build_ms": 594.9145,
+            "lock_wait_ms": 0.0818,
+            "owner_ms": 2.2168,
+            "worker_ms": 738.1255
+          },
+          {
+            "artifact_read_ms": 0.5633,
+            "build_ms": 583.9413,
+            "lock_wait_ms": 0.083,
+            "owner_ms": 2.3719,
+            "worker_ms": 719.5955
+          },
+          {
+            "artifact_read_ms": 0.5006999999999999,
+            "build_ms": 590.9059,
+            "lock_wait_ms": 0.0821,
+            "owner_ms": 2.3712,
+            "worker_ms": 731.398
+          },
+          {
+            "artifact_read_ms": 0.6468999999999999,
+            "build_ms": 657.3137999999999,
+            "lock_wait_ms": 0.0855,
+            "owner_ms": 2.5078,
+            "worker_ms": 805.7526
+          },
+          {
+            "artifact_read_ms": 0.7345,
+            "build_ms": 608.1346,
+            "lock_wait_ms": 0.0816,
+            "owner_ms": 2.9152,
+            "worker_ms": 755.8174
+          },
+          {
+            "artifact_read_ms": 0.5697,
+            "build_ms": 609.3864,
+            "lock_wait_ms": 0.0858,
+            "owner_ms": 2.3238999999999996,
+            "worker_ms": 750.4366
+          },
+          {
+            "artifact_read_ms": 0.5322,
+            "build_ms": 629.7017999999999,
+            "lock_wait_ms": 0.1014,
+            "owner_ms": 2.3497000000000003,
+            "worker_ms": 768.0124000000001
+          },
+          {
+            "artifact_read_ms": 0.5331,
+            "build_ms": 614.9506,
+            "lock_wait_ms": 0.0847,
+            "owner_ms": 2.3088,
+            "worker_ms": 760.4630999999999
+          }
+        ]
+      },
+      {
+        "backend": "native",
+        "edit_to_response_ms": [
+          653.5631,
+          646.9463,
+          647.7258,
+          654.7415,
+          650.1952,
+          651.3542,
+          651.8043,
+          652.6796,
+          657.7596
+        ],
+        "initial_ms": 7863.3462,
+        "jit_phases_ms": []
+      }
+    ],
+    "unit": "ms",
+    "warmup_edits_per_run": 2
+  },
+  "logical_cpus": 16,
+  "os": "windows",
+  "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: x86_64-pc-windows-msvc\nrelease: 1.99.1\nLLVM version: 23.1.1",
+  "measured_on": "2026-11-17",
+  "cpu": "AMD Ryzen 7 5700X (8 cores / 16 threads)",
+  "system": "Windows 11 Home 10.0.26300",
+  "source_manifest": "source-sha256.json",
+  "source_manifest_sha256": "faa99c1de9e1681ba476016e7b3d2b150db22949011b1797f8a3633ddc78c8dd"
+}

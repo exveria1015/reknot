@@ -11,6 +11,12 @@ Save an edit to the logic; once the build and contract checks succeed, new work 
 For example, you can adjust a bot's replies or input checks without reconnecting.
 Write handlers as ordinary Rust functions, then register them with an attribute.
 
+## Start with three ideas
+
+1. **Edit behavior in logic.** Start by changing a reply string.
+2. **Keep state in the host.** Connections and input counts stay there across updates.
+3. **Save and wait for the reload event.** The next call uses the new behavior.
+
 ## Try it
 
 With Rust 1.95 or later and Cargo installed, run this command from the repository root.
@@ -44,47 +50,31 @@ cargo run
 Choose a new directory as the destination. Commit the `Cargo.lock` created on the first run,
 then use `cargo run --locked` for subsequent runs.
 
-The project has three crates, each with a separate role:
+Start by changing `logic-v1` in `logic/src/lib.rs` and saving.
+Use `/count` to confirm that the host's input count survives the update.
 
-| Location | What belongs here |
-| --- | --- |
-| `logic` | Replies, calculations and other behavior you want to edit and try |
-| `protocol` | Shared input/output types, handler identities and contract versions |
-| `host` | Connections, event registration, persistent state and the update loop |
+## After the first successful edit
 
-Start by changing a reply in `logic/src/lib.rs` and saving.
-In the generated application, `/count` shows the number of input messages.
-The [typed-handler guide](TYPED_HANDLERS.md) explains the SDK source path and how to write handlers.
+The [typed-handler guide](TYPED_HANDLERS.md) explains the shared `protocol` crate and adding handlers.
+Read [development contracts](DEVELOPMENT_CONTRACTS.md) when changing contracts, running long-lived work,
+handling load limits or selecting JIT. The starter uses native DLLs, JSON and Drain;
+Restart and JIT setup are not needed for the first edit.
 
-## What changes during an update
+This is an evolving SDK for trusted local code. Restart the host when changing input/output contracts
+or when it reports the load limit. See [supported environments and compatibility](COMPATIBILITY.md).
 
-The typed API updates one crate/DLL as a unit.
-Its handlers and helper functions run from the same version of the code. A loaded version of the logic is called a **generation**.
+## Compare timings
 
-After a switch, requests already admitted continue to completion on the old generation.
-This is **Drain**. The entry points registered with the host stay in place and route later work to the new generation.
-For calls queued from another thread, the owner thread selects the generation when it admits the request for execution.
+The [reproducible benchmark](BENCHMARKS.md) reports native DLL versus layered JIT edit-to-response
+latency, and full typed round trips with JSON or optional MessagePack. Conditions and raw samples are included.
 
-The typed API also provides **Restart**, which stops registered workers and recreates them from typed checkpoints.
-See [typed Restart](TYPED_RESTART.md) for registration, migration and recovery. Drain remains the default.
-
-## Before you use it
-
-This SDK is under development and intended for trusted local Rust code. Its Rust API may change.
-Build the host and logic against the same SDK. See [compatibility and scope](COMPATIBILITY.md) for supported environments.
-
-When input/output formats or meanings change, increment the shared contract version and restart the host too.
-Derived schemas detect structural changes even under the same Rust type name. Equal schemas do not prove equal meaning.
-See [contract diagnostics and schemas](CONTRACTS_AND_SCHEMAS.md).
-
-DLLs stay loaded by default. The default budget is 32 cumulative load attempts, including failed native loads.
-Restart the development host when the budget is exhausted. [Explicit DLL reclamation](UNLOAD_SAFETY.md) is available,
-but unloading is not automatic, and running work or external effects are not rolled back.
+The checked-in results describe an earlier implementation. The guide separates that
+baseline from current build settings and provides commands for measuring your application.
+It also covers request latency during Drain, Restart and Managed collection.
 
 ## Read next
 
 - [WebSocket quiz room](QUIZ_ROOM.md) — Try real Axum integration alongside a Fastify/JS version in the same browser.
-
 - [Typed handlers](TYPED_HANDLERS.md) — Understand the generated code and add handlers.
 - [Troubleshooting](TROUBLESHOOTING.md) — Check why an update, call or shutdown is not completing.
 - [Documentation by task](INDEX.md) — Find framework integration, state migration and internal design guides.

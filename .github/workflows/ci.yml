@@ -137,6 +137,7 @@ jobs:
           cargo fmt --all -- --check
           rustfmt --edition 2021 --check reknot/tests/fixtures/handler.rs reknot/tests/fixtures/abi_v5.rs reknot/tests/fixtures/reclamation.rs reknot/tests/fixtures/managed_logic.rs reknot/tests/fixtures/typed_logic.rs reknot/tests/fixtures/typed_evolution.rs reknot/tests/fixtures/cancellation_logic.rs
           rustfmt --edition 2021 --check reknot/tests/fixtures/jit_compute.rs reknot/tests/fixtures/jit_handler.rs reknot/tests/fixtures/jit_std_handler.rs reknot/tests/fixtures/jit_layered_logic.rs reknot/tests/fixtures/jit_layered_support.rs
+          rustfmt --edition 2021 --check reknot/tests/fixtures/jit_typed_logic.rs
       - uses: actions/setup-python@v5
         with:
           python-version: '3.x'

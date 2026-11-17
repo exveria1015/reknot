@@ -44,6 +44,7 @@ impl<S> StateMigration<S> {
 }
 
 pub(super) struct WorkerReply {
+    format: WireFormat,
     error: Option<String>,
 }
 impl HostResource for WorkerReply {
@@ -52,7 +53,9 @@ impl HostResource for WorkerReply {
             return Err(ServiceError::INVALID_ARGUMENT);
         }
         let result = match operation {
-            0 => serde_json::from_slice::<Result<(), String>>(input)
+            0 => self
+                .format
+                .decode::<Result<(), String>>(input, MAX_MESSAGE_BYTES)
                 .map_err(|_| ServiceError::INVALID_ARGUMENT)?,
             1 => Err(String::from_utf8(input.to_vec()).map_err(|_| ServiceError::INVALID_ARGUMENT)?),
             _ => return Err(ServiceError::UNSUPPORTED_OPERATION),
@@ -135,16 +138,19 @@ impl ModuleHost {
             ));
         }
         let mut packet = descriptor.key().to_le_bytes().to_vec();
-        packet.extend_from_slice(&encode(&input, MAX_MESSAGE_BYTES)?);
+        packet.extend_from_slice(&handler.format.encode(&input, MAX_MESSAGE_BYTES)?);
         let checkpoint = state.encode(initial)?;
         let mut router = self.0.router.try_borrow_mut().map_err(|_| Error::Busy)?;
         if router.in_flight() >= self.0.max_in_flight {
             return Err(Error::Busy);
         }
-        let mailbox = self
-            .0
-            .resources
-            .register(__private::SERVICE, WorkerReply { error: None });
+        let mailbox = self.0.resources.register(
+            __private::SERVICE,
+            WorkerReply {
+                format: handler.format,
+                error: None,
+            },
+        );
         if let Err(error) = router.start_worker(id, mailbox.id(), &packet, checkpoint) {
             self.0.resources.revoke(mailbox.id());
             return Err(Error::Route(error));

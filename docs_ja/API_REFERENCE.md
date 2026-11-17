@@ -19,6 +19,11 @@
 | `builder.load(path)` / `builder.from_api(api)` | ネイティブ DLL／常駐する関数表から `ModuleHost` を作る。`unsafe` が必要 |
 | `builder.from_loaded(handler)` / `host.reload_loaded(handler)` | 検証済みの関数表とコード所有者をsafe APIで一体として受け取る。[コードの所有権](JIT_CODE_OWNERSHIP.md)を参照 |
 | `DevModule::start(builder, options)` | 初回ビルド・ロードとソース監視を始める。`unsafe` が必要で、今後の編集と依存先も信頼の対象 |
+| `Handler::with_format` / `WireFormat` | `typed-binary`で任意のMessagePack。既定はJSON。形式も契約として検査する |
+| `LayeredDevOptions::builtin` / `jit::builder::build` / `reknot-build` | 同じRust製ビルダーをセッション・ライブラリ・CLIから使う。外部スクリプト不要 |
+| `DevBackend` / `LayeredDevOptions` | `typed,jit-dev`で型付きCOFF/ELF開発を選ぶ。[手順](TYPED_JIT.md) |
+| `DevModule::start_managed` | 今後の二層ビルドも含めてManagedの寿命契約を明示的に受け入れる |
+| `DevModule::layered_snapshot` / `retry_layered` / `shutdown` | 予算をリセットせず二層ビルドを診断・再探索。shutdownはビルダーをjoin |
 | `DevModule::update()` | 変更検出、背景ビルドの結果適用、接続したブリッジ、キャンセル後の終了処理を進める |
 | `reknot-new PATH` | host・logic・protocol のひな形を新しいディレクトリへ生成する CLI。feature `typed` が必要 |
 
@@ -41,8 +46,8 @@ logic の `[lib] crate-type` はネイティブなら `["cdylib"]`、静的リ�
 複数の引数は構造体やタプルにまとめ、値が不要な場合は `()` を使います。
 借用した SDK オブジェクト、`&self`、ジェネリック関数は対象外です。
 
-境界を渡るのはコピーした JSON バイト列です。Rust オブジェクトやそのデストラクタを DLL 間で共有しません。
-JSON で表現できない値や変換失敗はエラーになります。
+境界を渡るのはコピーしたバイト列です。既定はJSONで、`typed-binary`では[ハンドラーごとのMessagePack](BINARY_MESSAGES.md)も選べます。Rust オブジェクトやそのデストラクタを DLL 間で共有しません。
+選択した形式で表現できない値や変換失敗はエラーになります。
 戻り値を `Result<Reply, AppError>` にした場合、呼び出しの外側の `Result` が SDK 側の失敗、内側が業務上の結果です。
 ビルド失敗・候補拒否では受付先を維持し、実行時の panic や業務エラーでもイベントを自動再実行しません。
 
@@ -66,7 +71,7 @@ Tokio では所有側を `current_thread` または `LocalSet` で動かしま�
 
 | 対象 | 上限・既定値 | 設定 |
 | --- | --- | --- |
-| JSON 入力・出力 | それぞれ1 MiB | `MAX_MESSAGE_BYTES` |
+| エンコード後の入力・出力 | それぞれ1 MiB | `MAX_MESSAGE_BYTES` |
 | モジュール内のハンドラー | 1～64個 | `MAX_HANDLERS` |
 | モジュールの同時要求 | 既定256件 | `module().builder().max_in_flight(n)` |
 | ブリッジの要求枠 | 既定256件。待機・実行・結果未受領の合計 | `BridgeOptions::capacity` |
@@ -323,10 +328,12 @@ Managedの `poll_update` は自身のイメージだけを回収対象とし、�
 | 構成 | 依存の指定 | 含まれる機能 |
 | --- | --- | --- |
 | 開発ホスト | 既定 feature | DLL ロード・保持量観測・コピー掃除、ビルド・監視補助 |
+| 型付きCOFF/ELF開発ホスト | `default-features = false, features = ["typed", "jit-dev"]` | 型付きDevModule、契約、Drain/Restart、明示選択したManaged回収 |
 | 二層COFF/ELF開発ホスト | `default-features = false, features = ["jit-dev"]` | 非同期ビルド・監視・検証付きロード・明示選択した管理回収 |
 | 外部で成果物をビルドするホスト | `default-features = false, features = ["native"]` | DLL ロード・保持量観測・コピー掃除 |
 | ロジック crate・静的ホスト | `default-features = false` | サービス・タスク・ルーティング・ハンドラー生成 |
 | 型付きロジック・静的ホスト | `default-features = false, features = ["typed"]` | 型付き入出力・モジュール契約。ネイティブ依存なし |
+| 型付きMessagePackロジック・静的ホスト | `default-features = false, features = ["typed-binary"]` | ハンドラーごとのJSON/MessagePackと型付き契約。ホストのロード用featureは別途追加 |
 
 ロード方式と Debug／Release は独立しています。
 

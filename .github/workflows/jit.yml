@@ -43,6 +43,12 @@ jobs:
         run: |
           cargo clippy -p reknot --no-default-features --features jit-dev --all-targets --locked -- -D warnings
           cargo test -p reknot --no-default-features --features jit-dev --doc --locked
+      - name: Typed ELF development, Drain, Restart and recovery
+        run: cargo test -p reknot --no-default-features --features typed,jit-dev --test layered_typed --locked -- --ignored --nocapture
+      - name: ELF producer stage cancellation and recovery
+        run: cargo test -p reknot --no-default-features --features jit-dev --lib superseded_stages_release_lock_and_do_not_publish --locked -- --ignored --nocapture
+      - name: Built-in Rust ELF producer with binary typed messages
+        run: cargo test -p reknot --no-default-features --features typed-binary,jit-dev --test layered_typed --locked -- --ignored --nocapture
   windows-rust-coff:
     runs-on: windows-latest
     timeout-minutes: 20
@@ -62,6 +68,12 @@ jobs:
         run: cargo test -p reknot --release --no-default-features --features jit-dev --lib stage_de --locked -- --ignored --nocapture --test-threads=1
       - name: Managed artifact trust type boundaries
         run: cargo test -p reknot --no-default-features --features jit-dev --doc --locked
+      - name: Typed COFF development, Drain, Restart and recovery
+        run: cargo test -p reknot --no-default-features --features typed,jit-dev --test layered_typed --locked -- --ignored --nocapture
+      - name: COFF producer stage cancellation and recovery
+        run: cargo test -p reknot --no-default-features --features jit-dev --lib superseded_stages_release_lock_and_do_not_publish --locked -- --ignored --nocapture
+      - name: Built-in Rust COFF producer with binary typed messages
+        run: cargo test -p reknot --no-default-features --features typed-binary,jit-dev --test layered_typed --locked -- --ignored --nocapture
       - name: Layered COFF without LLVM
         run: |
           $env:REKNOT_JIT_TOOLCHAIN = 'nightly-2026-11-02'

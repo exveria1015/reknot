@@ -7,8 +7,8 @@ Use this index to find a topic when you need it during implementation or develop
 
 ## Build an application
 
+- [Development contracts](DEVELOPMENT_CONTRACTS.md) — Move from the minimal first run to the details you need.
 - [WebSocket quiz room](QUIZ_ROOM.md) — Play and compare Axum + Reknot with Fastify + JS while editing logic.
-
 - [Typed handlers](TYPED_HANDLERS.md) — Generate a project, write ordinary functions and connect them to the host.
 - [Examples](../examples/README.md) — Find commands and the behavior each sample demonstrates.
 - [Tauri GUI lab](TAURI_GUI_LAB.md) — Edit Rust in a window, reload it and recover from build failures.
@@ -21,8 +21,8 @@ Use this index to find a topic when you need it during implementation or develop
 - [Host resources and Drain](HOST_RESOURCES_AND_ROUTING.md) — Register and revoke resources, call services and activate candidates.
 - [Async services and threads](ASYNC_SERVICES_AND_THREADS.md) — Await host I/O, cancel operations and notify across threads.
 - [Service contracts and typed initialization](SERVICE_CONTRACTS_AND_INIT.md) — Declare required services and pass per-generation configuration.
-
 - [Contract diagnostics and schemas](CONTRACTS_AND_SCHEMAS.md) — Derive schemas, inspect structural differences and export contracts.
+- [Binary messages](BINARY_MESSAGES.md) — Select optional MessagePack through the typed API.
 
 ## Preserve state and finish work
 
@@ -34,6 +34,7 @@ Use this index to find a topic when you need it during implementation or develop
 
 ## Continue development
 
+- [Typed JIT development](TYPED_JIT.md) — Select COFF/ELF with the same typed handles, clients and Drain/Restart.
 - [Development operation](DEVELOPMENT.md) — Watch sources, build and switch, recover from failure and observe limits.
 - [Layered COFF/ELF development](LAYERED_DEVELOPMENT.md) — Build on a background worker, handle foundation changes and opt into managed code reclamation.
 - [Troubleshooting](TROUBLESHOOTING.md) — Find checks by symptom or error.
@@ -51,6 +52,7 @@ Use this index to find a topic when you need it during implementation or develop
 
 ## Verify changes
 
+- [Comparison benchmarks](BENCHMARKS.md) — Measure edit-to-response, message round trips and requests during reload.
 - [Testing and Miri](TESTING.md) — Rerun checks and understand what each covers.
 - [Preparing a release](RELEASING.md) — Confirm the source, CI gates, distribution route and release limits.
 - [Changelog](../CHANGELOG.md) — Review user-visible changes and breaking APIs.

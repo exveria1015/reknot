@@ -16,8 +16,8 @@ Reknot は、ローカル開発中に信頼済みの Rust ロジックを更新�
 | Tauri GUI | 各 OS の Tauri ビルド環境。Windows は WebView2。npm・Tauri CLI は不要 |
 | ネイティブのコア・サンプル | Windows・Linux の CI を設定 |
 | 実験的なRust COFF（`jit`） | Windows x64 MSVCと、コンパイラーを一致させた常駐std/support DLL。LLVMは不要 |
-| 実験的なRust ELF（`jit`） | Linux x86_64 GNU/glibc。ELF64 ET_REL/PICと、コンパイラーを一致させた常駐std/support。LLVM不要。同一性検証、明示選択のManaged回収、Python 3.9以上による`jit-dev`に対応 |
-| 二層開発（`jit-dev`） | WindowsはCOFFとPowerShell 7、LinuxはELFとPython 3.9以上。リポジトリの二層ビルダーを使用 |
+| 実験的なRust ELF（`jit`） | Linux x86_64 GNU/glibc。ELF64 ET_REL/PICと、コンパイラーを一致させた常駐std/support。LLVM不要。同一性検証、明示選択のManaged回収、Rust製ビルダーの`jit-dev`に対応 |
+| 二層開発（`jit-dev`） | WindowsはCOFF、LinuxはELF。SDK内蔵のRust製ビルダーを使用し、従来の外部スクリプトも選択可能 |
 | 実験的なLLVM COFF（`jit`） | Windows x64、MSVC COFF、別途ビルドしたLLVM 23.1.0ブリッジ。emulated TLSにはnightly Rustも必要 |
 | GUI バックエンド | Windows・Linux CI で、実ウィンドウを開かずに検査 |
 | GUI 操作 | Linux の WebView を Xvfb で起動。編集・Drain／Restart・ビルドエラー復帰を検査 |

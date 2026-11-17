@@ -241,13 +241,17 @@ impl<
     /// dequeues/admits the event, not when this cross-thread call enters the queue.
     /// Dropping the returned future requests cancellation without replaying work.
     pub fn call(&self, input: I) -> RemoteCall<O> {
-        let result = encode(&input, MAX_MESSAGE_BYTES)
+        let result = self
+            .handler
+            .format
+            .encode(&input, MAX_MESSAGE_BYTES)
             .and_then(|bytes| self.client.submit(self.spec.clone(), bytes));
         let (state, error) = match result {
             Ok(state) => (Some(state), None),
             Err(error) => (None, Some(error)),
         };
         RemoteCall {
+            format: self.handler.format,
             state,
             error,
             marker: PhantomData,
@@ -258,6 +262,7 @@ impl<
 /// A Send future. Input/output conversion runs on the caller's thread. Only
 /// the resident owner driver ever constructs, polls or destroys DLL tasks.
 pub struct RemoteCall<O> {
+    format: WireFormat,
     state: Option<Arc<RequestState>>,
     error: Option<Error>,
     marker: PhantomData<fn() -> O>,
@@ -301,9 +306,7 @@ impl<O: DeserializeOwned> Future for RemoteCall<O> {
         };
         self.completed = true;
         self.state.take();
-        Poll::Ready(result.and_then(|bytes| {
-            serde_json::from_slice(&bytes).map_err(|error| Error::Codec(error.to_string()))
-        }))
+        Poll::Ready(result.and_then(|bytes| self.format.decode(&bytes, MAX_MESSAGE_BYTES)))
     }
 }
 impl<O> Drop for RemoteCall<O> {

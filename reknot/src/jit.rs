@@ -44,6 +44,9 @@ pub use coff::retention::{
     CoffRetentionSnapshot as JitRetentionSnapshot,
 };
 #[cfg(feature = "jit-dev")]
+#[path = "jit_builder.rs"]
+pub mod builder;
+#[cfg(feature = "jit-dev")]
 #[path = "jit_development.rs"]
 pub mod development;
 

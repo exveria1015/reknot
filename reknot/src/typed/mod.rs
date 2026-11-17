@@ -2,7 +2,8 @@
 //!
 //! Declare `Handler<Input, Output>` contracts in a shared protocol crate, mark
 //! ordinary functions with [`crate::handler`], and export a single module with
-//! [`crate::export_handlers`]. Only owned JSON bytes cross the native boundary.
+//! [`crate::export_handlers`]. Owned bytes cross the native boundary; JSON is the
+//! default, with optional per-handler MessagePack through `typed-binary`.
 //! Contract versions describe wire format **and meaning**: increment them when
 //! changing either. [`crate::schema`] derives structural JSON schemas; both Serde
 //! directions are compared before activation. Equal schemas do not prove equal
@@ -27,6 +28,8 @@
 //! fn require_send<T: Send>() {}
 //! require_send::<reknot::typed::HandlerHandle<String, String>>();
 //! ```
+mod codec;
+pub use codec::WireFormat;
 mod schema;
 pub use schema::{
     ContractDifference, ContractReport, ExportedModule, SourceLocation, StateSpec, TypeSchema,
@@ -41,10 +44,10 @@ mod bridge;
 pub use bridge::{
     BridgeDriver, BridgeOptions, BridgeShutdown, HandlerClient, ModuleClient, RemoteCall,
 };
-#[cfg(feature = "dev-tools")]
+#[cfg(any(feature = "dev-tools", feature = "jit-dev"))]
 mod development;
-#[cfg(feature = "dev-tools")]
-pub use development::{DevModule, DevOptions, ReloadEvent, ReloadMode};
+#[cfg(any(feature = "dev-tools", feature = "jit-dev"))]
+pub use development::{DevBackend, DevModule, DevOptions, ReloadEvent, ReloadMode};
 
 use crate::{RouteError, ServiceKey};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -60,6 +63,7 @@ pub const MAX_HANDLERS: usize = 64;
 pub struct Handler<I, O> {
     name: &'static str,
     version: u32,
+    format: WireFormat,
     marker: PhantomData<fn(I) -> O>,
 }
 impl<I, O> Copy for Handler<I, O> {}
@@ -76,8 +80,15 @@ impl<I, O> Handler<I, O> {
         Self {
             name,
             version,
+            format: WireFormat::Json,
             marker: PhantomData,
         }
+    }
+    /// Select the encoding on both sides of a shared protocol. Changing this is
+    /// a contract change; rebuild/restart the host and increment its version.
+    pub const fn with_format(mut self, format: WireFormat) -> Self {
+        self.format = format;
+        self
     }
 }
 impl<
@@ -89,6 +100,7 @@ impl<
         HandlerSpec {
             name: self.name.into(),
             version: self.version,
+            format: self.format,
             input: std::any::type_name::<I>().into(),
             output: std::any::type_name::<O>().into(),
             input_schema: TypeSchema::of::<I>(),
@@ -104,6 +116,8 @@ impl<
 pub struct HandlerSpec {
     pub name: String,
     pub version: u32,
+    #[serde(default, skip_serializing_if = "WireFormat::is_json")]
+    pub format: WireFormat,
     pub input: String,
     pub output: String,
     pub input_schema: TypeSchema,
@@ -114,6 +128,7 @@ impl PartialEq for HandlerSpec {
     fn eq(&self, other: &Self) -> bool {
         self.name == other.name
             && self.version == other.version
+            && self.format == other.format
             && self.input == other.input
             && self.output == other.output
             && self.input_schema == other.input_schema
@@ -324,37 +339,9 @@ fn route_error(module: &Module, source: RouteError) -> Error {
     }
 }
 
-// Limit while serializing, before allocating an arbitrarily large second buffer.
+// Contract metadata and worker checkpoints remain readable JSON.
 fn encode<T: Serialize>(value: &T, limit: usize) -> Result<Vec<u8>, Error> {
-    struct Bounded {
-        bytes: Vec<u8>,
-        limit: usize,
-        full: bool,
-    }
-    impl std::io::Write for Bounded {
-        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            if bytes.len() > self.limit.saturating_sub(self.bytes.len()) {
-                self.full = true;
-                return Err(std::io::Error::other("message too large"));
-            }
-            self.bytes.extend_from_slice(bytes);
-            Ok(bytes.len())
-        }
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-    let mut writer = Bounded {
-        bytes: Vec::new(),
-        limit,
-        full: false,
-    };
-    let result = serde_json::to_writer(&mut writer, value);
-    if writer.full {
-        return Err(Error::TooLarge { limit });
-    }
-    result.map_err(|error| Error::Codec(error.to_string()))?;
-    Ok(writer.bytes)
+    WireFormat::Json.encode(value, limit)
 }
 
 /// Implementation support for generated code; not an application API.
@@ -449,7 +436,7 @@ pub mod __private {
         Ok(u64::from_le_bytes(prefix.try_into().unwrap()))
     }
     pub async fn invoke<I, O, F>(
-        _: Handler<I, O>,
+        handler: Handler<I, O>,
         context: RequestContext,
         call: impl FnOnce(RequestContext, I) -> F,
     ) -> Result<(), ServiceError>
@@ -464,9 +451,11 @@ pub mod __private {
             .input()
             .get(8..)
             .ok_or(ServiceError::INVALID_ARGUMENT)?;
-        let result = match serde_json::from_slice::<I>(input) {
-            Ok(input) => encode(&call(context, input).await, MAX_MESSAGE_BYTES),
-            Err(error) => Err(Error::Codec(error.to_string())),
+        let result = match handler.format.decode::<I>(input, MAX_MESSAGE_BYTES) {
+            Ok(input) => handler
+                .format
+                .encode(&call(context, input).await, MAX_MESSAGE_BYTES),
+            Err(error) => Err(error),
         };
         let (operation, bytes) = match result {
             Ok(bytes) => (0, bytes),

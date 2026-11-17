@@ -490,6 +490,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                         ReloadEvent::BuildFailed { .. } => "build_failed",
                         ReloadEvent::Rejected { .. } => "rejected",
                         ReloadEvent::WatchFailed { .. } => "watch_failed",
+                        _ => "development",
                     };
                     let info = if matches!(event, ReloadEvent::Reloaded { .. }) { Some(host.handler(INFO)?.call(()).await?) } else { None };
                     let mut room = room.lock().unwrap();

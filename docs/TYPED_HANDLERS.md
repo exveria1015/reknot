@@ -7,6 +7,9 @@ Handlers can be synchronous or asynchronous functions. The SDK converts their in
 
 To try a running example first, start with the [console bot in the README](README.md#try-it).
 
+For a layered support/logic project, [typed JIT development](TYPED_JIT.md) uses this same
+API with COFF/ELF builds. The generator below starts with the native DLL backend.
+
 ## Create your own project
 
 With Rust 1.95 or later and Cargo installed, run these commands from the SDK repository root.
@@ -161,7 +164,14 @@ Poll `driver` on the owner thread with the executor, including while awaiting
 `client.shutdown()`. Continue calling `development.update()` for maintenance.
 `development.bridge(...)` remains available for manual polling, but its requests
 advance only when `update()` is called.
-The initial build is synchronous. Later builds run in the background.
+The initial build is synchronous. Later native builds, private DLL copying, and
+verification of the copied bytes run on the build worker. The copy is closed and
+reopened before verification, so filesystem work at that boundary is also off the
+owner thread. `update()` loads the prepared copy, checks contracts, and switches
+generations on the owner thread; DLL initialization and callbacks can still block.
+A superseded or undeliverable copy is removed without loading it. Copy/verification
+failures report `BuildFailed` and preserve the current module. Direct `load`/`reload`
+calls and initial startup remain synchronous.
 
 `start` is `unsafe`. The caller must ensure that the project, its dependencies and future edits obey the SDK's native execution contracts.
 See [compatibility and scope](COMPATIBILITY.md).

@@ -19,6 +19,11 @@ This section collects contracts and limits. The typed API uses the existing ABI 
 | `builder.load(path)` / `builder.from_api(api)` | Create a `ModuleHost` from a native DLL or resident callback table; requires `unsafe` |
 | `builder.from_loaded(handler)` / `host.reload_loaded(handler)` | Consume a validated table and code owner together through safe APIs; see [code ownership](JIT_CODE_OWNERSHIP.md) |
 | `DevModule::start(builder, options)` | Begin the initial build/load and source watching; requires `unsafe`, including trust in future edits and dependencies |
+| `Handler::with_format` / `WireFormat` | Optional MessagePack with `typed-binary`; JSON by default; encoding identity is checked as part of the contract |
+| `LayeredDevOptions::builtin` / `jit::builder::build` / `reknot-build` | The same Rust producer through sessions, library or CLI; no external script required |
+| `DevBackend` / `LayeredDevOptions` | Select typed COFF/ELF development with `typed,jit-dev`; [guide](TYPED_JIT.md) |
+| `DevModule::start_managed` | Explicitly accept Managed lifetime obligations for every layered build |
+| `DevModule::layered_snapshot` / `retry_layered` / `shutdown` | Inspect/rescan layered builds without resetting budgets; shutdown joins builders |
 | `DevModule::update()` | Detect edits, apply background build results, drive attached bridges and run cancellation cleanup |
 | `reknot-new PATH` | Generate host, logic and protocol crates in a new directory; requires feature `typed` |
 
@@ -41,8 +46,8 @@ Inputs and outputs are owned values satisfying `Serialize + DeserializeOwned + J
 Group several arguments into a struct or tuple; use `()` when no value is needed.
 Borrowed SDK objects, `&self` methods and generic functions are not supported.
 
-Only copied JSON bytes cross the boundary. Rust objects and their destructors are not shared across DLLs.
-Values that JSON cannot represent, or failures during conversion, produce errors.
+Only copied bytes cross the boundary. JSON is the default; `typed-binary` adds [per-handler MessagePack](BINARY_MESSAGES.md). Rust objects and their destructors are not shared across DLLs.
+Values unsupported by the selected format, or conversion failures, produce errors.
 For an output of `Result<Reply, AppError>`, the outer call result reports SDK failure and the inner result reports application behavior.
 Build failure or candidate rejection keeps admission unchanged. Runtime panics and application errors do not trigger event replay.
 
@@ -66,7 +71,7 @@ The host converts framework events and sends replies; no framework-specific adap
 
 | Item | Limit or default | Setting |
 | --- | --- | --- |
-| JSON input and output | 1 MiB each | `MAX_MESSAGE_BYTES` |
+| Encoded input and output | 1 MiB each | `MAX_MESSAGE_BYTES` |
 | Handlers per module | 1–64 | `MAX_HANDLERS` |
 | Concurrent module requests | Default 256 | `module().builder().max_in_flight(n)` |
 | Bridge request slots | Default 256; queued, running and completed-but-unconsumed requests combined | `BridgeOptions::capacity` |
@@ -325,10 +330,12 @@ Use `default-features = false` in logic crates and statically linked hosts.
 | Configuration | Dependency options | Included features |
 | --- | --- | --- |
 | Development host | Defaults | DLL loading, retention diagnostics, copy cleanup, build/watch helpers |
+| Typed COFF/ELF development host | `default-features = false, features = ["typed", "jit-dev"]` | Typed DevModule, contracts, Drain/Restart and optional Managed collection |
 | Layered COFF/ELF development host | `default-features = false, features = ["jit-dev"]` | Background layered builder, watching, checked loading and opt-in managed collection |
 | Host with an external builder | `default-features = false, features = ["native"]` | DLL loading, retention diagnostics and copy cleanup |
 | Logic crate or static host | `default-features = false` | Services, tasks, routing and handler generation |
 | Typed logic or static host | `default-features = false, features = ["typed"]` | Typed input/output and module contracts, without native dependencies |
+| Typed MessagePack logic or static host | `default-features = false, features = ["typed-binary"]` | Typed contracts with per-handler JSON/MessagePack; add the chosen host's loading features separately |
 
 Loading mode is independent of Debug/Release.
 

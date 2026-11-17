@@ -7,6 +7,9 @@ English | [日本語](../docs_ja/ELF_JIT.md)
 at load time. Enable `reknot = { ..., default-features = false, features = ["jit"] }`
 in the host. The normal `.so` loader remains available through `native`.
 
+For ordinary development, use the [built-in Rust producer](LAYERED_DEVELOPMENT.md)
+without Python. The external Python producer below remains available.
+
 ## Checked artifacts and Managed collection
 
 Use [build-layered-elf.py](../scripts/build-layered-elf.py) with Python 3.9+,

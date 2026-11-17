@@ -7,6 +7,15 @@
 This starter lets you edit Rust reply logic while the host keeps running.
 Start the application, then try updating the logic.
 
+### First, remember three things
+
+1. Edit behavior in `logic/src/lib.rs`.
+2. Keep connections and persistent state in the host.
+3. Save, wait for the reload event, then make another call.
+
+Start with the steps below. [Development contracts](https://github.com/exveria1015/reknot/blob/main/docs/DEVELOPMENT_CONTRACTS.md)
+cover Restart, message formats, load limits and JIT when you need them.
+
 ### Start the application
 
 Run from the directory containing this README:
@@ -82,6 +91,15 @@ Restart the development host when the limit is reached. DLL reclamation does not
 
 このプロジェクトは、ホストを動かしたまま Rust の返信処理を編集するためのひな形です。
 まず起動して、ロジックの更新を試してください。
+
+### 最初に覚える3点
+
+1. `logic/src/lib.rs`の処理を編集する。
+2. 接続や継続する状態はホストに置く。
+3. 保存して更新通知を待ち、もう一度呼び出す。
+
+まずは以下の手順で動かしてください。Restart、メッセージ形式、ロード上限、JITは、必要になったときに
+[開発契約](https://github.com/exveria1015/reknot/blob/main/docs_ja/DEVELOPMENT_CONTRACTS.md)を参照できます。
 
 ### 起動する
 

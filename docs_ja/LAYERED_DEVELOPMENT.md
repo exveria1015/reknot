@@ -2,30 +2,29 @@
 
 [English](../docs/LAYERED_DEVELOPMENT.md) | 日本語
 
-Windows版はx64 MSVC、PowerShell 7、コンパイラーを一致させた常駐std/supportを使う実験的な経路です。
-ホストの `jit-dev` featureは `jit` と `notify` を含み、`native` / `typed` は要求しません。
-logic/supportの依存構成は[コード所有権ガイド](JIT_CODE_OWNERSHIP.md)に従います。Handler ABI 5は維持します。
+実験的な二層開発はWindows x64 MSVC（COFF）とLinux x86_64 GNU（ELF）で使えます。
+コンパイラーを一致させた常駐std/support、rustup/Cargo、対象OSのリンカーが必要です。
+`LayeredDevOptions::builtin`はSDKのRust製ビルダーを使い、PowerShell/Pythonを起動しません。
+`jit-dev`は`jit`と`notify`を含み、`native`と`typed`は任意です。
 
-Linux x86_64 GNUでも同じセッション・所有権APIを使えます。Python 3.9以上と
-`scripts/build-layered-elf.py`をPowerShellビルダーの代わりに指定し、supportには
-`lib`・`.so`を除いたCargo target名を渡します。同一性検証、Managed回収、以下の
-受け入れ状態は共通です。OS固有の処理とビルド手順は[ELFガイド](ELF_JIT.md)に記載します。
+logic/supportの構成は[COFF](JIT_CODE_OWNERSHIP.md)・[ELF](ELF_JIT.md)のガイドに従います。
+supportには`lib`・拡張子を除くCargo target名を渡します。Handler ABI 5、同一性検査、
+Managed回収、以下の受付状態は共通です。従来の`LayeredDevOptions::new`にスクリプトを渡す
+経路も維持し、その場合だけWindowsのPowerShell 7またはLinuxのPython 3.9以上が必要です。
 
 ## 起動と進行
+
+型付き関数と既存の`ModuleHost`クライアントには、[DevModuleの二層バックエンド](TYPED_JIT.md)を
+使えます。以下と同じビルド・受付・回収の処理を共有します。
 
 ```rust,no_run
 use reknot::HostResources;
 use reknot::jit::development::{LayeredDevOptions, LayeredDevSession};
 
 # fn example() -> Result<(), String> {
-let builder = if cfg!(target_os = "linux") {
-    "reknot/scripts/build-layered-elf.py"
-} else {
-    "reknot/scripts/build-layered-jit.ps1"
-};
-let mut options = LayeredDevOptions::new(
+let mut options = LayeredDevOptions::builtin(
     "project/Cargo.toml", "my_logic", "my_support",
-    builder, "project/target/layered-cache",
+    "project/target/layered-cache",
 );
 options.toolchain = "stable".into();
 let resources = HostResources::new(); // ここでアプリケーションのサービスを登録。
@@ -47,6 +46,17 @@ session.shutdown()?; // 終了時にはビルドworkerの終了を明示的に�
 実行中ジョブは一件、保留は最新の観測revision一件、結果チャネルは容量一件です。
 子プロセスから取得する出力と診断を制限し、セッションは最新のイベントだけを保持します。
 
+組み込みビルダーは、準備、基盤処理、Cargo生成、公開の区切りでジョブが最新かを確認します。
+古いジョブは残りの段階を省いて`Superseded`を返し、snapshotの診断に停止した段階を記録します。
+実行中のCargoやbuild scriptは通常どおり終了を待ち、公開を開始した後は途中停止しません。
+有効化直前のrevision検査も維持します。外部ビルダーは呼び出しの前後で確認し、内部処理を中断しません。
+単独のビルダーAPI/CLIはソース監視を持たず、依頼されたビルドを最後まで実行します。
+
+組み込みビルダーは、Cargo出力先のwriter lockを保持した1回の試行内で、新しく取得した
+Cargo metadataとビルド前のコンパイラー情報を監視計画と共有します。metadataにも生成時と
+同じコンパイラー設定・出力先を使います。編集・再試行ごとに準備し直し、編集をまたぐ
+metadataキャッシュは保持しません。容量の両検査と、生成後のcompiler/std/support/lockfile検査は維持します。
+
 既定debounceは50 msです。新要求は新世代へ送り、受付済み要求と後始末は元のコードで完了させます。
 `snapshot().has_active_generation` で初回失敗と旧世代の継続を区別できます。
 `BuildFailed`、`Rejected`、`Superseded`、`WatchUnavailable`、`CacheFull`、
@@ -61,7 +71,34 @@ session.shutdown()?; // 終了時にはビルドworkerの終了を明示的に�
 これは観測した通知の順序であり、ソース全体の原子的スナップショットではありません。
 遅れて届いた変更通知は次の更新に属します。実行後に古くなった候補も寿命policyに応じて保持・計上します。
 
+## 開発ループを使わずにビルドする
+
+同じRust製ビルダーをCLIから実行できます。`--output`には未使用のパスを指定してください。
+成功するとオブジェクトと、そのパスに`.json`を付けた検証用manifestを生成します。
+キャッシュと出力にはハードリンクを使えるファイルシステム（NTFS、ext4など）が必要です。
+
+```sh
+cargo run -p reknot --no-default-features --features jit-dev --bin reknot-build --locked -- --manifest-path project/Cargo.toml --package my_logic --support-target my_support --cache-dir project/target/layered --output project/target/first.object
+```
+
+再利用には`--foundation-manifest`、依存の選択には`--features`・`--no-default-features`を使います。
+`--help`でその他の設定を確認できます。ライブラリの`jit::builder::build(&BuildOptions)`も同じ処理です。
+Cargoの出力先をロックし、実際のsupport artifact・コンパイラー・lockfileを照合します。
+基盤・オブジェクトは内容ハッシュで保存し、既存の出力を上書きしません。Windowsでは基盤ファイルを
+読み取り共有で固定し、Linuxではビルド前後のバイト列を確認します。生成物はコードの信頼性の証明ではありません。
+
 ## 入力・土台・キャッシュ
+
+組み込みビルダーは、常駐supportと依存クレートのCargo dev `opt-level`を既定で1にし、
+再ロードするlogicは0に保ちます。チェックポイントJSONの処理時間を短縮できる場合がありますが、
+初回コンパイルの費用が増え、編集から応答までの時間も長くなることがあります。
+効果は状態型やジェネリックコードの生成先によって変わるため、設定を変える際は実際の負荷で測定してください。
+`LayeredDevOptions::support_optimization`と`BuildOptions::support_optimization`には
+`Some(0..=3)`を指定でき、`None`ならCargo設定を継承します。CLIでは
+`--support-optimization 0..3|inherit`です。Cargoのパッケージ別overrideは引き続き適用されます。
+supportとlogicのCargo呼び出しには同じ設定を渡し、固定した子プロセス環境を通じて
+基盤ビルドキーに含めます。再利用時は実際のsupport profile・成果物の同一性も検査します。
+常駐基盤が変わった場合はホストの再起動が必要です。外部producerのprofile選択は変更しません。
 
 共通watcherは推移的なローカル依存、manifest、lockfile、toolchainファイル、Cargo設定、
 明示的な `additional_inputs` を監視します。`LayeredInput` には `Logic` / `Foundation` の所属を指定します。

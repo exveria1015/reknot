@@ -1,0 +1,403 @@
+{
+  "arch": "x86_64",
+  "benchmark_version": 1,
+  "boundary": {
+    "host": "release; resident callbacks; no DLL load or I/O; includes clone, encoding, routing, decoding, verification and cleanup",
+    "rows": [
+      {
+        "float_count": 1,
+        "iterations_per_batch": 1000,
+        "json_batches_us": [
+          2.048708,
+          1.842285,
+          1.83923,
+          1.805557,
+          1.89195,
+          1.799876,
+          1.826616,
+          1.8496890000000001,
+          1.805126,
+          1.876771,
+          2.536277,
+          1.812419,
+          1.827228,
+          1.8864079999999999,
+          1.90837
+        ],
+        "json_bytes": 29,
+        "json_us_per_call": {
+          "max": 2.536277,
+          "median": 1.842285,
+          "min": 1.799876,
+          "n": 15,
+          "p95": 2.536277
+        },
+        "messagepack_batches_us": [
+          1.659743,
+          1.633194,
+          1.583359,
+          1.667557,
+          1.65299,
+          1.6714449999999998,
+          1.629386,
+          1.6025849999999997,
+          1.681694,
+          1.619097,
+          1.774207,
+          1.578721,
+          1.5903829999999999,
+          1.7906289999999998,
+          1.660745
+        ],
+        "messagepack_bytes": 21,
+        "messagepack_us_per_call": {
+          "max": 1.7906289999999998,
+          "median": 1.65299,
+          "min": 1.578721,
+          "n": 15,
+          "p95": 1.7906289999999998
+        }
+      },
+      {
+        "float_count": 64,
+        "iterations_per_batch": 1000,
+        "json_batches_us": [
+          6.84627,
+          6.727498000000001,
+          6.796558,
+          7.036899,
+          6.694076,
+          7.009708,
+          7.404998000000001,
+          6.845459,
+          6.726636999999999,
+          7.291135000000001,
+          7.0258780000000005,
+          6.930880999999999,
+          7.399197,
+          7.467516000000001,
+          6.85105
+        ],
+        "json_bytes": 431,
+        "json_us_per_call": {
+          "max": 7.467516000000001,
+          "median": 6.930880999999999,
+          "min": 6.694076,
+          "n": 15,
+          "p95": 7.467516000000001
+        },
+        "messagepack_batches_us": [
+          4.0734200000000005,
+          4.022795,
+          4.111812,
+          4.122653000000001,
+          3.9848440000000007,
+          3.95034,
+          4.264689000000001,
+          3.9706669999999997,
+          4.0202,
+          3.9932800000000004,
+          4.166675000000001,
+          4.4901409999999995,
+          4.183997000000001,
+          4.1225320000000005,
+          4.148352
+        ],
+        "messagepack_bytes": 338,
+        "messagepack_us_per_call": {
+          "max": 4.4901409999999995,
+          "median": 4.111812,
+          "min": 3.95034,
+          "n": 15,
+          "p95": 4.4901409999999995
+        }
+      },
+      {
+        "float_count": 4096,
+        "iterations_per_batch": 100,
+        "json_batches_us": [
+          297.16646999999995,
+          288.67314000000005,
+          293.73305,
+          286.56048,
+          296.7035,
+          282.66287,
+          305.69667,
+          291.72979000000004,
+          304.80519,
+          289.18429999999995,
+          308.03787,
+          302.79953,
+          293.11878,
+          285.90105,
+          290.40139
+        ],
+        "json_bytes": 32447,
+        "json_us_per_call": {
+          "max": 308.03787,
+          "median": 293.11878,
+          "min": 282.66287,
+          "n": 15,
+          "p95": 308.03787
+        },
+        "messagepack_batches_us": [
+          138.82329,
+          137.10025000000002,
+          145.35884,
+          185.92984,
+          145.88142,
+          135.08007,
+          138.70797000000002,
+          142.8835,
+          136.09616,
+          136.59691,
+          158.17058,
+          135.8525,
+          137.1317,
+          136.14406,
+          135.23395
+        ],
+        "messagepack_bytes": 20498,
+        "messagepack_us_per_call": {
+          "max": 185.92984,
+          "median": 137.1317,
+          "min": 135.08007,
+          "n": 15,
+          "p95": 185.92984
+        }
+      }
+    ],
+    "unit": "us per complete typed echo call (batch average)",
+    "warmup_batches": 2
+  },
+  "edit": {
+    "debounce_ms": 50,
+    "fixture": "single typed String handler; same body; native links SDK into cdylib; JIT uses resident SDK support dylib",
+    "jit": {
+      "max": 379.772254,
+      "median": 352.278594,
+      "min": 345.044163,
+      "n": 18,
+      "p95": 379.772254
+    },
+    "native": {
+      "max": 249.271947,
+      "median": 236.493999,
+      "min": 232.184297,
+      "n": 18,
+      "p95": 249.271947
+    },
+    "order": [
+      "native",
+      "jit",
+      "jit",
+      "native"
+    ],
+    "poll_ms": 1,
+    "profile": "dev opt=0 debug=0 codegen-units=1",
+    "runs": [
+      {
+        "backend": "native",
+        "edit_to_response_ms": [
+          238.814863,
+          234.744607,
+          236.099165,
+          241.341139,
+          237.743951,
+          236.493999,
+          234.536329,
+          249.271947,
+          242.933249
+        ],
+        "initial_ms": 4889.198435,
+        "jit_phases_ms": []
+      },
+      {
+        "backend": "jit",
+        "edit_to_response_ms": [
+          353.458889,
+          347.35785699999997,
+          348.691467,
+          350.891148,
+          345.044163,
+          351.380675,
+          346.286369,
+          353.71305600000005,
+          355.497139
+        ],
+        "initial_ms": 5267.509191,
+        "jit_phases_ms": [
+          {
+            "artifact_read_ms": 0.35835100000000003,
+            "build_ms": 258.184804,
+            "lock_wait_ms": 0.007755,
+            "owner_ms": 0.600315,
+            "worker_ms": 300.93499
+          },
+          {
+            "artifact_read_ms": 0.305122,
+            "build_ms": 249.34809,
+            "lock_wait_ms": 0.006732999999999999,
+            "owner_ms": 0.7551049999999999,
+            "worker_ms": 293.648512
+          },
+          {
+            "artifact_read_ms": 0.35602700000000004,
+            "build_ms": 252.351164,
+            "lock_wait_ms": 0.0066619999999999995,
+            "owner_ms": 0.632405,
+            "worker_ms": 295.66157
+          },
+          {
+            "artifact_read_ms": 0.350447,
+            "build_ms": 253.350934,
+            "lock_wait_ms": 0.006823,
+            "owner_ms": 0.748232,
+            "worker_ms": 296.814005
+          },
+          {
+            "artifact_read_ms": 0.295864,
+            "build_ms": 247.908495,
+            "lock_wait_ms": 0.007414,
+            "owner_ms": 0.6572410000000001,
+            "worker_ms": 292.46211
+          },
+          {
+            "artifact_read_ms": 0.29323899999999997,
+            "build_ms": 255.74558400000004,
+            "lock_wait_ms": 0.006902999999999999,
+            "owner_ms": 0.733854,
+            "worker_ms": 298.455025
+          },
+          {
+            "artifact_read_ms": 0.30039299999999997,
+            "build_ms": 250.144272,
+            "lock_wait_ms": 0.008406,
+            "owner_ms": 0.6452899999999999,
+            "worker_ms": 293.70786799999996
+          },
+          {
+            "artifact_read_ms": 0.296005,
+            "build_ms": 257.840568,
+            "lock_wait_ms": 0.006943,
+            "owner_ms": 0.649176,
+            "worker_ms": 300.71734
+          },
+          {
+            "artifact_read_ms": 0.287689,
+            "build_ms": 258.545666,
+            "lock_wait_ms": 0.006793,
+            "owner_ms": 0.692918,
+            "worker_ms": 301.728871
+          }
+        ]
+      },
+      {
+        "backend": "jit",
+        "edit_to_response_ms": [
+          345.997617,
+          349.527182,
+          379.772254,
+          350.35663999999997,
+          355.859767,
+          365.413676,
+          352.278594,
+          364.643063,
+          367.45863899999995
+        ],
+        "initial_ms": 5293.815622,
+        "jit_phases_ms": [
+          {
+            "artifact_read_ms": 0.31832699999999997,
+            "build_ms": 250.143391,
+            "lock_wait_ms": 0.006913,
+            "owner_ms": 0.6620499999999999,
+            "worker_ms": 293.358744
+          },
+          {
+            "artifact_read_ms": 0.305713,
+            "build_ms": 254.00308300000003,
+            "lock_wait_ms": 0.006412,
+            "owner_ms": 0.6618,
+            "worker_ms": 296.049186
+          },
+          {
+            "artifact_read_ms": 0.309249,
+            "build_ms": 274.786829,
+            "lock_wait_ms": 0.008146,
+            "owner_ms": 0.577332,
+            "worker_ms": 327.817296
+          },
+          {
+            "artifact_read_ms": 0.307607,
+            "build_ms": 255.83739,
+            "lock_wait_ms": 0.006472,
+            "owner_ms": 0.659617,
+            "worker_ms": 296.57503
+          },
+          {
+            "artifact_read_ms": 0.313047,
+            "build_ms": 257.86451999999997,
+            "lock_wait_ms": 0.007143999999999999,
+            "owner_ms": 0.708268,
+            "worker_ms": 302.090369
+          },
+          {
+            "artifact_read_ms": 0.270698,
+            "build_ms": 266.2948,
+            "lock_wait_ms": 0.007263,
+            "owner_ms": 0.598502,
+            "worker_ms": 312.214174
+          },
+          {
+            "artifact_read_ms": 0.32008,
+            "build_ms": 255.087712,
+            "lock_wait_ms": 0.007364,
+            "owner_ms": 0.653976,
+            "worker_ms": 298.803141
+          },
+          {
+            "artifact_read_ms": 0.26128,
+            "build_ms": 266.393446,
+            "lock_wait_ms": 0.006673,
+            "owner_ms": 0.660518,
+            "worker_ms": 312.099017
+          },
+          {
+            "artifact_read_ms": 0.34379499999999996,
+            "build_ms": 270.561734,
+            "lock_wait_ms": 0.007023000000000001,
+            "owner_ms": 0.5674130000000001,
+            "worker_ms": 315.506999
+          }
+        ]
+      },
+      {
+        "backend": "native",
+        "edit_to_response_ms": [
+          234.234063,
+          235.990714,
+          236.382218,
+          237.813932,
+          237.490013,
+          232.301583,
+          236.580126,
+          234.227735,
+          232.184297
+        ],
+        "initial_ms": 4987.683364,
+        "jit_phases_ms": []
+      }
+    ],
+    "unit": "ms",
+    "warmup_edits_per_run": 2
+  },
+  "logical_cpus": 16,
+  "os": "linux",
+  "rustc": "rustc 1.100.0 (0ef1bc386 2026-11-09)\nbinary: rustc\ncommit-hash: 0ef1bc386059596dada8fb65b50425aab2ea637a\ncommit-date: 2026-11-09\nhost: x86_64-unknown-linux-gnu\nrelease: 1.100.0\nLLVM version: 23.1.5",
+  "measured_on": "2026-11-17",
+  "cpu": "AMD Ryzen 7 5700X (8 cores / 16 threads)",
+  "system": "Ubuntu 24.04 on WSL2",
+  "source_manifest": "source-sha256.json",
+  "source_manifest_sha256": "faa99c1de9e1681ba476016e7b3d2b150db22949011b1797f8a3633ddc78c8dd"
+}

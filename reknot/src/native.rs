@@ -5,6 +5,8 @@ use crate::{LoadedHandler, RouteError};
 use libloading::Library;
 use reknot_abi::services::HandlerApiFn;
 use std::fmt;
+#[cfg(all(feature = "dev-tools", feature = "typed"))]
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -60,6 +62,54 @@ struct LibraryCopy {
     remove_on_drop: bool,
 }
 
+/// An unloaded, private copy. Sending it transfers only filesystem ownership;
+/// no DLL entry point, symbol lookup or validation callback has run yet.
+#[cfg(all(feature = "dev-tools", feature = "typed"))]
+pub(crate) struct PreparedLibrary(LibraryCopy);
+
+#[cfg(all(feature = "dev-tools", feature = "typed"))]
+pub(crate) fn prepare_library(path: &Path) -> Result<PreparedLibrary, LoadError> {
+    let copy = copy_library(path)?;
+    // Closing the writer and reopening the copy may wait for filesystem work.
+    // Do this on the build worker, and verify content before announcing readiness.
+    if let Err(error) = verify_copy(path, &copy.path) {
+        crate::retention::copy_failed();
+        return Err(error.into()); // Drop removes this never-loaded copy.
+    }
+    Ok(PreparedLibrary(copy))
+}
+
+#[cfg(all(feature = "dev-tools", feature = "typed"))]
+fn verify_copy(source: &Path, destination: &Path) -> std::io::Result<()> {
+    let mut source = std::fs::File::open(source)?;
+    let mut destination = std::fs::File::open(destination)?;
+    let mut remaining = source.metadata()?.len();
+    let mismatch = || {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "native library copy differs from the build artifact",
+        )
+    };
+    if remaining != destination.metadata()?.len() {
+        return Err(mismatch());
+    }
+    let mut left = [0u8; 64 * 1024];
+    let mut right = [0u8; 64 * 1024];
+    while remaining != 0 {
+        let count = remaining.min(left.len() as u64) as usize;
+        source.read_exact(&mut left[..count])?;
+        destination.read_exact(&mut right[..count])?;
+        if left[..count] != right[..count] {
+            return Err(mismatch());
+        }
+        remaining -= count as u64;
+    }
+    if source.read(&mut left[..1])? != 0 || destination.read(&mut right[..1])? != 0 {
+        return Err(mismatch());
+    }
+    Ok(())
+}
+
 impl LibraryCopy {
     fn remove(&mut self) -> Option<CopyRemovalError> {
         self.remove_on_drop = false;
@@ -113,6 +163,15 @@ fn copy_library(source_path: &Path) -> Result<LibraryCopy, LoadError> {
 }
 pub(crate) unsafe fn load(path: &Path) -> Result<LoadedHandler, RouteError> {
     let copy = copy_library(path).map_err(RouteError::Load)?;
+    load_copy(copy)
+}
+
+#[cfg(all(feature = "dev-tools", feature = "typed"))]
+pub(crate) unsafe fn load_prepared(prepared: PreparedLibrary) -> Result<LoadedHandler, RouteError> {
+    load_copy(prepared.0)
+}
+
+unsafe fn load_copy(copy: LibraryCopy) -> Result<LoadedHandler, RouteError> {
     let library = Library::new(&copy.path)
         .inspect_err(|_| {
             crate::retention::open_failed();
@@ -287,6 +346,65 @@ fn finish_reclamation(mut copy: LibraryCopy, result: Result<(), String>) -> Recl
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[cfg(all(feature = "dev-tools", feature = "typed", not(miri)))]
+    fn prepared_copy_crosses_threads_without_loading_and_abandonment_removes_it() {
+        let id = crate::retention::next_id().unwrap();
+        let source = std::env::temp_dir().join(format!(
+            "reknot-copy-source-{}-{}.bin",
+            std::process::id(),
+            id.0
+        ));
+        let bytes: Vec<u8> = (0..150_001).map(|i| i as u8).collect();
+        std::fs::write(&source, &bytes).unwrap();
+        let worker_source = source.clone();
+        // Deliberately not a library: preparation must never try to load it.
+        let prepared = std::thread::spawn(move || prepare_library(&worker_source).unwrap())
+            .join()
+            .unwrap();
+        let path = prepared.0.path.clone();
+        let copy_id = prepared.0.id;
+        assert!(!crate::retention::record(copy_id).unwrap().loaded);
+        std::fs::write(&source, b"newer build").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        drop(prepared); // Same cleanup path as a superseded/undeliverable output.
+        assert!(!path.exists());
+        assert!(crate::retention::record(copy_id).is_none());
+        std::fs::remove_file(source).unwrap();
+    }
+
+    #[test]
+    #[cfg(all(feature = "dev-tools", feature = "typed", not(miri)))]
+    fn copy_verification_rejects_content_and_length_mismatches() {
+        let id = crate::retention::next_id().unwrap();
+        let source = std::env::temp_dir().join(format!(
+            "reknot-copy-check-{}-{}.bin",
+            std::process::id(),
+            id.0
+        ));
+        let bytes = vec![23u8; 70_003];
+        std::fs::write(&source, &bytes).unwrap();
+        let copy = copy_library(&source).unwrap();
+        verify_copy(&source, &copy.path).unwrap();
+        let mut changed = bytes.clone();
+        changed[69_999] ^= 1;
+        std::fs::write(&copy.path, &changed).unwrap();
+        assert_eq!(
+            verify_copy(&source, &copy.path).unwrap_err().kind(),
+            std::io::ErrorKind::InvalidData
+        );
+        std::fs::write(&copy.path, &bytes[..100]).unwrap();
+        assert_eq!(
+            verify_copy(&source, &copy.path).unwrap_err().kind(),
+            std::io::ErrorKind::InvalidData
+        );
+        std::fs::remove_file(&source).unwrap();
+        assert!(verify_copy(&source, &copy.path).is_err());
+        let path = copy.path.clone();
+        drop(copy);
+        assert!(!path.exists());
+    }
 
     #[test]
     fn failed_close_preserves_the_copy_and_uncertain_record_without_retrying_handle() {

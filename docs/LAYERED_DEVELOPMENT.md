@@ -2,32 +2,30 @@
 
 English | [日本語](../docs_ja/LAYERED_DEVELOPMENT.md)
 
-On Windows, this experimental path uses x64 MSVC, PowerShell 7 and a compiler-matched
-resident std/support pair. Enable `jit-dev` on the host; it includes `jit` and `notify`
-without requiring `native` or `typed`. Keep the logic/support dependency configuration
-described in [code ownership](JIT_CODE_OWNERSHIP.md). Handler ABI 5 is unchanged.
+The experimental layered route supports Windows x64 MSVC (COFF) and Linux x86_64 GNU (ELF).
+It requires compiler-matched resident std/support, rustup/Cargo and the platform linker.
+`LayeredDevOptions::builtin` uses the SDK's Rust producer without launching PowerShell/Python.
+`jit-dev` includes `jit` and `notify`; `native` and `typed` remain optional.
 
-Linux x86_64 GNU uses the same session/ownership API with Python 3.9+ and
-`scripts/build-layered-elf.py` in place of the PowerShell builder. Use the Cargo
-support target name without `lib`/`.so`. Checked foundation identity, Managed
-collection and all admission states below are shared; OS-specific details and
-Linux build commands are in the [ELF guide](ELF_JIT.md).
+Follow the [COFF](JIT_CODE_OWNERSHIP.md) or [ELF](ELF_JIT.md) logic/support layout.
+Pass the support Cargo target name without a platform prefix/extension. Handler ABI 5,
+identity checks, Managed collection and the admission states below are shared.
+The existing `LayeredDevOptions::new` script path remains available; only that route requires
+PowerShell 7 on Windows or Python 3.9+ on Linux.
 
 ## Starting and driving development
+
+For typed functions and existing `ModuleHost` clients, [use the layered backend of
+DevModule](TYPED_JIT.md). It shares this builder, admission and collection pipeline.
 
 ```rust,no_run
 use reknot::HostResources;
 use reknot::jit::development::{LayeredDevOptions, LayeredDevSession};
 
 # fn example() -> Result<(), String> {
-let builder = if cfg!(target_os = "linux") {
-    "reknot/scripts/build-layered-elf.py"
-} else {
-    "reknot/scripts/build-layered-jit.ps1"
-};
-let mut options = LayeredDevOptions::new(
+let mut options = LayeredDevOptions::builtin(
     "project/Cargo.toml", "my_logic", "my_support",
-    builder, "project/target/layered-cache",
+    "project/target/layered-cache",
 );
 options.toolchain = "stable".into();
 let resources = HostResources::new(); // Register the application's services here.
@@ -51,6 +49,20 @@ activation still execute on the owner thread. There is one running job, one late
 observed revision, and a result channel of capacity one. Captured process output and
 diagnostics are bounded; the session stores the latest event rather than an event log.
 
+The built-in producer checks whether a job is still current between preparation,
+foundation work, Cargo generation and publication. An obsolete job skips the
+remaining stages and reports `Superseded`; the snapshot diagnostic identifies its
+stopping stage. Already running Cargo/build scripts finish normally, and publication
+is not interrupted once started. Final revision checks still prevent stale activation.
+External producers are checked around their invocation, not interrupted inside it.
+The standalone builder API/CLI has no source watcher and completes its requested build.
+
+The built-in producer shares fresh Cargo metadata and pre-build compiler information
+with watch planning within each build attempt, under the Cargo-output writer lock.
+Metadata uses the same compiler settings and output directory as generation. Each edit
+and retry prepares again; no metadata cache is retained across edits. Both cache-capacity
+scans and post-build compiler/std/support/lockfile checks remain in place.
+
 The default debounce is 50 ms. New root requests enter the new generation; admitted
 requests and their cleanup keep their original code and host resources. `snapshot`
 distinguishes initial failure (`has_active_generation == false`) from continued service.
@@ -69,7 +81,38 @@ event order, not an atomic filesystem snapshot; a delayed save notification belo
 the next update. A candidate already executed before becoming stale remains accounted
 for under its lifetime policy.
 
+## Build without a development loop
+
+The CLI runs the same Rust producer. Select an unused `--output` path. Success creates
+an object and an identity-checked manifest with `.json` appended to that path.
+Cache/output filesystems must support hard links, such as NTFS or ext4.
+
+```sh
+cargo run -p reknot --no-default-features --features jit-dev --bin reknot-build --locked -- --manifest-path project/Cargo.toml --package my_logic --support-target my_support --cache-dir project/target/layered --output project/target/first.object
+```
+
+Use `--foundation-manifest` for reuse, `--features`/`--no-default-features` for dependency
+selection, and `--help` for other settings. `jit::builder::build(&BuildOptions)` runs the same
+library implementation. It locks the Cargo output directory and checks the actual support
+artifact, compiler and lockfile. Foundation/object files are content-addressed; existing outputs
+are not overwritten. Windows freezes foundation files with read sharing; Linux compares bytes
+before and after the build. Artifacts establish identity, not code trust.
+
 ## Inputs, foundation and cache
+
+The built-in producer defaults to Cargo dev `opt-level=1` for resident support and
+dependencies, while keeping the reloadable logic at `opt-level=0`. This can reduce
+checkpoint JSON processing time, but adds initial compilation work and can increase
+edit-to-response time. The effect depends on the state type and where generic code
+is instantiated; measure your workload before changing the setting.
+`LayeredDevOptions::support_optimization` and `BuildOptions::support_optimization`
+accept `Some(0..=3)` or `None` to inherit Cargo configuration. The CLI equivalent
+is `--support-optimization 0..3|inherit`. Cargo package overrides still apply.
+The setting is applied consistently to support and logic Cargo invocations and
+participates in the foundation build key through the captured child environment.
+Actual support profile/artifact identity is still checked before reuse. A changed
+resident foundation requires a host restart. External producers retain their own
+profile selection; this option does not change their scripts.
 
 The shared watcher follows local transitive dependencies, manifests, lockfiles,
 toolchain files, Cargo configuration and explicit `additional_inputs`. Each

@@ -19,6 +19,8 @@ native reload and static linking. Default features enable `native` loading and
 `dev-tools` build/watch helpers, plus `typed` Serde JSON inputs/results. Logic crates
 and static hosts can use `default-features = false`; add `features = ["typed"]`
 when using the typed facade.
+Optional `typed-binary` adds per-handler named MessagePack with the same owned-byte
+boundary and 1 MiB limit. See [binary messages](https://github.com/exveria1015/reknot/blob/main/docs/BINARY_MESSAGES.md).
 
 The optional `jit` feature adds experimental Windows x64 COFF and Linux x86_64 GNU
 ELF object loaders with owned `LoadedHandler` routing. The Linux `ElfEngine` needs
@@ -31,7 +33,11 @@ KeepLoaded is the default. Checked Managed loading requires an additional unsafe
 lifetime contract and owner-thread collection. See
 [code ownership](https://github.com/exveria1015/reknot/blob/main/docs/JIT_CODE_OWNERSHIP.md)
 and [layered development](https://github.com/exveria1015/reknot/blob/main/docs/LAYERED_DEVELOPMENT.md).
-The repository's PowerShell/Python builders and LLVM bridge are not included in this crate archive.
+With `typed,jit-dev`, the same `DevModule` accepts layered options and preserves typed clients and Drain/Restart; see the
+[typed JIT guide](https://github.com/exveria1015/reknot/blob/main/docs/TYPED_JIT.md).
+`LayeredDevOptions::builtin` and the `reknot-build` CLI include a Rust producer in
+this crate archive; ordinary layered builds need no PowerShell/Python. Legacy
+external scripts and the LLVM bridge remain separate repository tools.
 
 Native loading is unsafe and assumes trusted SDK-compatible code. Keep host and
 logic on the same SDK version. Tasks and resource registries remain on their

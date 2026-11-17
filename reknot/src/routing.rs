@@ -456,6 +456,21 @@ impl RequestRouter {
         self.candidate(api, image, environment)
     }
 
+    // Preserve the generation checks before executing any candidate DLL code.
+    #[cfg(all(feature = "dev-tools", feature = "typed"))]
+    pub(crate) unsafe fn prepare_native_copy(
+        &self,
+        copy: crate::native::PreparedLibrary,
+    ) -> Result<PreparedHandler, RouteError> {
+        self.active
+            .id
+            .checked_add(1)
+            .ok_or(RouteError::GenerationExhausted)?;
+        self.options.generations.reserve()?;
+        let (api, image) = crate::native::load_prepared(copy)?.into_parts();
+        self.candidate(api, image, self.active.environment.clone())
+    }
+
     /// # Safety
     /// The statically supplied callbacks must obey from_api's lifetime contract.
     pub unsafe fn prepare_api(&self, api: HandlerApi) -> Result<PreparedHandler, RouteError> {

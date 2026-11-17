@@ -12,6 +12,7 @@ Rust logic reloaded during local development.
 | `reknot_macros/` | Handler generation for native and static logic |
 | `reknot_abi/` | Versioned C ABI tables and ownership contracts |
 | `examples/` | Runnable hosts, logic and integration samples |
+| `reknot/benches/`, `benchmarks/` | Benchmark drivers, historical samples and analysis tools |
 | `docs/`, `docs_ja/` | Public guides in English and Japanese |
 | `scripts/` | Verification helpers |
 
