@@ -159,6 +159,10 @@ fn installed_git_cli_generates_a_portable_static_and_native_application() {
         };
         let target = sdk.join(name);
         copy_tree(&source.join("src"), &target.join("src"));
+        // Cargo validates explicit benchmark targets even when installing only a binary.
+        if source.join("benches").is_dir() {
+            copy_tree(&source.join("benches"), &target.join("benches"));
+        }
         let original = source.join("Cargo.toml.orig");
         std::fs::copy(
             if original.exists() {

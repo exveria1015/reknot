@@ -144,6 +144,8 @@ tags and their verification records. A version entry alone does not announce pub
 
 ### Development and CI fixes
 
+- Include benchmark sources in the isolated Git SDK used by CLI installation
+  tests, so Cargo can resolve the manifest's explicit benchmark targets.
 - Keep `dev-tools` usable without `typed` by gating the shared typed/JIT watcher
   to its consumers; check that feature combination and JIT fixture formatting in CI.
 - Keep the GUI smoke client's HTTP/1.1 connection open instead of forwarding
