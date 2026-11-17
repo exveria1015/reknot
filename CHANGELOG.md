@@ -6,6 +6,11 @@ tags and their verification records. A version entry alone does not announce pub
 
 ## Unreleased
 
+- Catch unwinding panics in SDK request destructors and retain images when cleanup fails.
+  Report failed host I/O destruction without treating the operation as quiescent.
+- Restrict Windows native DLL dependency search and capture checked JIT objects from authorized
+  directory trees. Derive support features from the Cargo invocation that compiles the logic.
+
 ### Typed development and message formats
 
 - Select native DLL or checked layered COFF/ELF builds through the same typed

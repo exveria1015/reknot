@@ -27,8 +27,8 @@ python3 scripts/build-layered-elf.py \
 
 `logic.o.json`（schema 3）と、ハッシュ別に保存したobject・support・stdを生成します。
 コンパイラー、target、コード生成フラグ、supportの解決済みfeaturesとprofile、
-Cargo.lockを記録し、Cargoが実際に選んだsupportとコンパイル前後の基盤のバイト列を
-照合します。同じCargo出力先を使うビルダーはロックで直列化します。
+Cargo.lockを記録します。supportはlogicをコンパイルしたCargo呼び出しの成果物を取り込みます。
+同じCargo出力先を使うビルダーはロックで直列化します。
 容量超過は`CacheFull`とし、他セッションのファイルを自動削除しません。
 
 ```rust,no_run

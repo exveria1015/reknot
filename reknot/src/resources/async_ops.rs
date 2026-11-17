@@ -1,4 +1,5 @@
 use super::*;
+use crate::async_service::AsyncPoll;
 use crate::{AsyncOperationId, AsyncPolled, AsyncStarted, HostWaker};
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -11,11 +12,12 @@ struct Operation {
     state: RefCell<OperationState>,
     limit: usize,
 }
-struct OperationState {
-    future: Option<HostServiceFuture>,
-    result: Option<Result<Vec<u8>, ServiceError>>,
-    polling: bool,
-    poisoned: bool,
+enum OperationState {
+    Pending(HostServiceFuture),
+    Polling,
+    Complete(Result<Vec<u8>, ServiceError>),
+    PollFailed { _future: HostServiceFuture },
+    CleanupFailed,
 }
 pub(super) struct Operations {
     limits: AsyncLimits,
@@ -73,7 +75,7 @@ pub(super) unsafe extern "C" fn start(
     len: usize,
     output_limit: usize,
 ) -> AsyncStarted {
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+    let result = crate::task::catch_callback(|| {
         if data.is_null() || (len != 0 && input.is_null()) {
             return Err(ServiceError::INVALID_ARGUMENT);
         }
@@ -125,19 +127,14 @@ pub(super) unsafe extern "C" fn start(
                 cancel,
                 reason: Cell::new(reason),
                 limit: output_limit,
-                state: RefCell::new(OperationState {
-                    future: Some(future),
-                    result: None,
-                    polling: false,
-                    poisoned: false,
-                }),
+                state: RefCell::new(OperationState::Pending(future)),
             }),
         );
         Ok(AsyncOperationId {
             registry: registry.id,
             serial,
         })
-    }))
+    })
     .unwrap_or(Err(ServiceError::PANICKED));
     match result {
         Ok(id) => AsyncStarted { status: 0, id },
@@ -154,7 +151,7 @@ pub(super) unsafe extern "C" fn poll(
     output: *mut u8,
     capacity: usize,
 ) -> AsyncPolled {
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+    let result = crate::task::catch_callback(|| {
         if data.is_null() || host.is_null() || (capacity != 0 && output.is_null()) {
             return failed(ServiceError::INVALID_ARGUMENT, false);
         }
@@ -165,26 +162,23 @@ pub(super) unsafe extern "C" fn poll(
         };
         let future = {
             let mut state = entry.state.borrow_mut();
-            if state.poisoned {
-                return failed(ServiceError::PANICKED, false);
-            }
-            if state.polling {
-                return failed(ServiceError::BUSY, false);
-            }
-            if state.result.is_none() {
-                state.polling = true;
-                state.future.take()
+            if matches!(*state, OperationState::Pending(_)) {
+                let OperationState::Pending(future) =
+                    std::mem::replace(&mut *state, OperationState::Polling)
+                else {
+                    unreachable!();
+                };
+                Some(future)
             } else {
                 None
             }
         };
         if let Some(mut future) = future {
-            let polled = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let polled = crate::task::catch_callback(|| {
                 let waker = crate::task::waker_from_host(&*host);
                 future.as_mut().poll(&mut Context::from_waker(&waker))
-            }));
-            let mut state = entry.state.borrow_mut();
-            match polled {
+            });
+            let next = match polled {
                 Ok(Poll::Ready(result)) => {
                     let result = result.and_then(|bytes| {
                         if bytes.len() <= entry.limit {
@@ -193,35 +187,35 @@ pub(super) unsafe extern "C" fn poll(
                             Err(ServiceError::INVALID_ARGUMENT)
                         }
                     });
-                    drop(state);
-                    drop(future); // I/O future destruction precedes the quiescent response.
-                    let mut state = entry.state.borrow_mut();
-                    state.polling = false;
-                    state.result = Some(result);
+                    // The destructor ran at most once. A failed return cannot
+                    // certify quiescence, even though the Future was consumed.
+                    if crate::task::catch_callback(|| drop(future)).is_ok() {
+                        OperationState::Complete(result)
+                    } else {
+                        OperationState::CleanupFailed
+                    }
                 }
-                Ok(Poll::Pending) => {
-                    state.polling = false;
-                    state.future = Some(future);
-                }
-                Err(_) => {
-                    state.polling = false;
-                    state.future = Some(future);
-                    state.poisoned = true;
-                    drop(state);
-                    entry.cancel.cancel();
-                }
+                Ok(Poll::Pending) => OperationState::Pending(future),
+                Err(()) => OperationState::PollFailed { _future: future },
+            };
+            let poisoned = matches!(
+                next,
+                OperationState::PollFailed { .. } | OperationState::CleanupFailed
+            );
+            *entry.state.borrow_mut() = next;
+            if poisoned {
+                let _ = crate::task::catch_callback(|| entry.cancel.cancel());
             }
         }
         let state = entry.state.borrow();
-        let Some(result) = &state.result else {
-            return failed(
-                if state.poisoned {
-                    ServiceError::PANICKED
-                } else {
-                    ServiceError(0)
-                },
-                false,
-            );
+        let result = match &*state {
+            OperationState::Pending(_) => return failed(ServiceError(0), false),
+            OperationState::Polling => return failed(ServiceError::BUSY, false),
+            OperationState::PollFailed { .. } => return failed(ServiceError::PANICKED, false),
+            OperationState::CleanupFailed => {
+                return failed(ServiceError::ASYNC_CLEANUP_FAILED, false);
+            }
+            OperationState::Complete(result) => result,
         };
         if let Some(reason) = entry.reason.get() {
             return failed(reason, true);
@@ -246,11 +240,11 @@ pub(super) unsafe extern "C" fn poll(
                 }
             }
         }
-    }));
+    });
     result.unwrap_or_else(|_| failed(ServiceError::PANICKED, false))
 }
 pub(super) unsafe extern "C" fn cancel(data: *mut c_void, id: AsyncOperationId) -> u32 {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+    crate::task::catch_callback(|| {
         let registry = &*data.cast::<Registry>();
         match registry.async_ops.get(registry.id, id) {
             Ok(entry) => {
@@ -262,17 +256,14 @@ pub(super) unsafe extern "C" fn cancel(data: *mut c_void, id: AsyncOperationId) 
             }
             Err(error) => error.0,
         }
-    }))
+    })
     .unwrap_or(ServiceError::PANICKED.0)
 }
 pub(super) unsafe extern "C" fn release(data: *mut c_void, id: AsyncOperationId) {
-    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+    let _ = crate::task::catch_callback(|| {
         let registry = &*data.cast::<Registry>();
         if let Ok(entry) = registry.async_ops.get(registry.id, id) {
-            let ready = {
-                let state = entry.state.borrow();
-                state.result.is_some() && !state.polling
-            };
+            let ready = matches!(*entry.state.borrow(), OperationState::Complete(_));
             if ready {
                 let removed = registry.async_ops.entries.borrow_mut().remove(&id.serial);
                 drop(removed);
@@ -280,7 +271,7 @@ pub(super) unsafe extern "C" fn release(data: *mut c_void, id: AsyncOperationId)
                 let _ = cancel(data, id);
             }
         }
-    }));
+    });
 }
 
 impl Services {
@@ -315,7 +306,7 @@ impl Services {
         cx: &mut Context<'_>,
         output: &mut [u8],
         notification: Option<&crate::HostNotification>,
-    ) -> Poll<Result<usize, ServiceError>> {
+    ) -> AsyncPoll {
         let fallback = notification
             .is_none()
             .then(|| crate::task::host_waker_from(cx.waker(), None));
@@ -337,15 +328,19 @@ impl Services {
                 output.len(),
             )
         };
+        let status = ServiceError(result.status);
         if result.ready == 0 {
-            return Poll::Pending;
-        }
-        if result.status != 0 {
-            Poll::Ready(Err(ServiceError(result.status)))
+            if status == ServiceError::ASYNC_CLEANUP_FAILED {
+                AsyncPoll::CleanupFailed
+            } else {
+                AsyncPoll::Pending
+            }
+        } else if result.status != 0 {
+            AsyncPoll::Ready(Err(status))
         } else if result.written > output.len() {
-            Poll::Ready(Err(ServiceError::INVALID_ARGUMENT))
+            AsyncPoll::Ready(Err(ServiceError::INVALID_ARGUMENT))
         } else {
-            Poll::Ready(Ok(result.written))
+            AsyncPoll::Ready(Ok(result.written))
         }
     }
     pub(crate) fn cancel_async(&self, id: AsyncOperationId) -> Result<(), ServiceError> {

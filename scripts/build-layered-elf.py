@@ -186,27 +186,17 @@ class Builder:
             require(libraries == [support_path], "SupportLibrary must be the actual Cargo output")
             return artifact
 
-        support_features = sorted(nodes[support_id]["features"])
-        prior = None
+        prior_foundation = None
         if a.FoundationManifest:
             prior = json.loads(Path(a.FoundationManifest).read_text())
-            foundation = prior["foundation"]
+            prior_foundation = prior["foundation"]
             require(prior["schema"] == 3 and prior["profile"] == "layered-rust-library-object" and
-                    foundation["target"] == TARGET and foundation["rustc"].strip() == info and
-                    foundation["rustflags"] == FLAGS and foundation["std_library"]["sha256"] == digest(std_bytes) and
-                    foundation["cargo_lock_sha256"] == digest(lock_bytes) and
-                    foundation["support_build"]["package_id"] == support_id and
-                    foundation["support_build"]["features"] == support_features, "Foundation reuse identity differs")
-            expected_build = foundation["support_build"]
-        else:
-            records = self.run(cargo + ["build"] + build_base +
-                               ["--package", support_id, "--lib", "--no-default-features"] +
-                               (["--features", ",".join(support_features)] if support_features else []), records=True)
-            artifact = support_artifact(records)
-            expected_build = self.build_profile(artifact, support_id)
-        support_bytes = support_path.read_bytes()
-        if prior:
-            require(digest(support_bytes) == foundation["support_library"]["sha256"], "Support changed before logic build")
+                    prior_foundation["target"] == TARGET and prior_foundation["rustc"].strip() == info and
+                    prior_foundation["rustflags"] == FLAGS and
+                    prior_foundation["std_library"]["sha256"] == digest(std_bytes) and
+                    prior_foundation["std_library"]["bytes"] == len(std_bytes) and
+                    prior_foundation["cargo_lock_sha256"] == digest(lock_bytes) and
+                    prior_foundation["support_build"]["package_id"] == support_id, "Foundation reuse identity differs")
         fd, staging = tempfile.mkstemp(suffix=".o", prefix="logic-", dir=output.parent)
         os.close(fd)
         try:
@@ -215,8 +205,14 @@ class Builder:
                                (["--features", ",".join(features)] if features else []) +
                                ["--", "-C", "codegen-units=1", "-C", "lto=off", "-C", "panic=unwind",
                                 "-C", f"opt-level={a.Optimization}", "-C", f"debuginfo={a.DebugInfo}", f"--emit=obj={staging}"], records=True)
-            require(self.build_profile(support_artifact(records), support_id) == expected_build,
-                    "Cargo selected a different support profile/features for logic")
+            # Capture the dependency configuration Cargo actually used for logic.
+            support_build = self.build_profile(support_artifact(records), support_id)
+            support_bytes = support_path.read_bytes()
+            if prior_foundation is not None:
+                expected = prior_foundation["support_library"]
+                require(support_build == prior_foundation["support_build"] and
+                        digest(support_bytes) == expected["sha256"] and len(support_bytes) == expected["bytes"],
+                        "Logic support build differs from the requested foundation")
             require(support_path.read_bytes() == support_bytes and std.read_bytes() == std_bytes and
                     lock.read_bytes() == lock_bytes and self.run([compiler, "-vV"]) == info,
                     "Foundation changed during logic build; no manifest published")
@@ -227,7 +223,7 @@ class Builder:
             directory = self.cache / "foundation" / key
             foundation = {"rustc": info, "target": TARGET, "handler_abi": 5, "panic": "unwind",
                           "tls": "generation-local", "prefer_dynamic": True, "rustflags": FLAGS,
-                          "cargo_lock_sha256": digest(lock_bytes), "support_build": expected_build,
+                          "cargo_lock_sha256": digest(lock_bytes), "support_build": support_build,
                           "std_library": immutable(directory / std.name, std_bytes),
                           "support_library": immutable(directory / support_path.name, support_bytes)}
             record = {"schema": 3, "profile": "layered-rust-library-object", "foundation": foundation,
@@ -239,7 +235,7 @@ class Builder:
             publish(manifest_path, manifest, unique=bool(a.ReceiptPath))
             self.status = "Built"
             self.receipt(manifest=str(manifest_path), manifest_sha256=digest(manifest),
-                         object_sha256=digest(obj), reused=bool(prior))
+                         object_sha256=digest(obj), reused=prior_foundation is not None)
             print(manifest.decode())
         finally:
             Path(staging).unlink(missing_ok=True)

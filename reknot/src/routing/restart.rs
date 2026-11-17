@@ -263,6 +263,7 @@ impl RestartState<'_> {
             controls: RefCell::new(Vec::new()),
             completion: router.active.completion.clone(),
             activity_failed: Cell::new(false),
+            unconfirmed_cleanup: Cell::new(false),
             environment: candidate.environment,
             bindings: candidate.bindings,
         });
@@ -309,12 +310,15 @@ impl RestartState<'_> {
         assert!(!self.finished, "completed Restart polled again");
         *router.active.completion.borrow_mut() = Some(cx.waker().clone());
         let _ = router.poll_workers(cx);
-        if router.in_flight() != 0 {
+        let mut generations = std::iter::once(&router.active).chain(&router.retired);
+        let unconfirmed = generations
+            .clone()
+            .find(|generation| generation.unconfirmed_cleanup.get());
+        if unconfirmed.is_none() && router.in_flight() != 0 {
             return Poll::Pending;
         }
-        let failed = std::iter::once(router.active.clone())
-            .chain(router.retired.iter().cloned())
-            .find(|generation| generation.activity_failed.get());
+        let failed =
+            unconfirmed.or_else(|| generations.find(|generation| generation.activity_failed.get()));
         let result = if let Some(generation) = failed {
             Err(RouteError::ActivityFailed {
                 generation: generation.id,

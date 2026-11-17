@@ -45,6 +45,12 @@ impl AsyncLimits {
 }
 pub type HostServiceFuture = Pin<Box<dyn Future<Output = Result<Vec<u8>, ServiceError>>>>;
 
+pub(crate) enum AsyncPoll {
+    Pending,
+    CleanupFailed,
+    Ready(Result<usize, ServiceError>),
+}
+
 /// Host-owned Send + Sync signal, with no SDK/FFI pointers.
 #[derive(Clone, Default)]
 pub struct CancellationToken(Arc<CancelState>);
@@ -214,6 +220,8 @@ struct CallActivity {
     stopping: bool,
     cancel_sent: bool,
     notification: Option<crate::HostNotification>,
+    control: crate::request::TaskControl,
+    cleanup_failed: bool,
 }
 impl CallActivity {
     fn deliver(&mut self, result: Result<Vec<u8>, ServiceError>) {
@@ -241,6 +249,9 @@ unsafe impl ManagedActivity for CallActivity {
         Ok(())
     }
     fn poll_join(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), ServiceError>> {
+        if self.cleanup_failed {
+            return Poll::Pending;
+        }
         let abandoned = self.state.borrow().abandoned;
         if ((abandoned && !self.stopping) || (self.stopping && !self.cancel_sent))
             && self.as_mut().request_stop().is_err()
@@ -275,8 +286,17 @@ unsafe impl ManagedActivity for CallActivity {
             .services
             .poll_async(id, cx, &mut this.output, this.notification.as_ref())
         {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(result) => {
+            AsyncPoll::Pending => Poll::Pending,
+            AsyncPoll::CleanupFailed => {
+                let error = ServiceError::ASYNC_CLEANUP_FAILED;
+                this.cleanup_failed = true;
+                this.control.report_cleanup_failure(error);
+                this.deliver(Err(error));
+                // The request can observe the failure, but the operation still
+                // owns its slot and does not certify shutdown of external work.
+                Poll::Pending
+            }
+            AsyncPoll::Ready(result) => {
                 this.services.release_async(id);
                 this.id = None;
                 let result = result.map(|len| this.output[..len].to_vec());
@@ -348,6 +368,8 @@ impl RequestContext {
             stopping: false,
             cancel_sent: false,
             notification,
+            control: self.control().try_clone()?,
+            cleanup_failed: false,
         })?;
         Ok(ServiceCall {
             state,

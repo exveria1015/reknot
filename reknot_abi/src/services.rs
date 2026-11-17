@@ -8,6 +8,7 @@ pub const TASK_CONTROL_ABI_VERSION: u32 = 2;
 pub const ACTIVITY_ABI_VERSION: u32 = 1;
 pub const GENERATION_SERVICES_ABI_VERSION: u32 = 1;
 pub const CANCELLATION_ABI_VERSION: u32 = 1;
+pub const TASK_CLEANUP_ABI_VERSION: u32 = 1;
 pub const MAX_SERVICE_REQUIREMENTS: usize = 32;
 pub const MAX_INIT_BYTES: usize = 1024 * 1024;
 
@@ -107,6 +108,19 @@ pub struct HostTaskVTableCancellation {
     /// its Waker callbacks must not unwind across the C ABI.
     pub cancelled: unsafe extern "C" fn(*mut c_void) -> TaskHandle,
 }
+
+/// Optional failure reporting after the frozen cancellation prefix. Check the
+/// base table size and the cleanup header before reading the callback.
+#[repr(C)]
+pub struct HostTaskVTableCleanup {
+    pub base: HostTaskVTableCancellation,
+    pub cleanup: HandlerHeader,
+    /// Report PANICKED for a task destructor, or ASYNC_CLEANUP_FAILED for
+    /// host I/O whose destruction did not finish normally. The host must not
+    /// use the report as proof that it can reclaim the generation.
+    pub cleanup_failed: unsafe extern "C" fn(*mut c_void, ServiceError),
+}
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct GenerationLocalValue {
@@ -175,6 +189,8 @@ impl ServiceError {
     pub const FAILED: Self = Self(8);
     pub const CANCELLED: Self = Self(9);
     pub const CLOSED: Self = Self(10);
+    /// Host I/O returned from poll, but its subsequent destruction panicked.
+    pub const ASYNC_CLEANUP_FAILED: Self = Self(11);
 }
 
 #[repr(C)]
@@ -192,6 +208,8 @@ pub struct AsyncStarted {
 pub struct AsyncPolled {
     /// 0: pending, 1: quiescent. Pending errors do not certify completion.
     pub ready: u32,
+    /// `ASYNC_CLEANUP_FAILED` with ready=0 means destruction was attempted
+    /// and cleanup is unconfirmed. The operation still occupies its slot.
     pub status: u32,
     /// Required size on BUFFER_TOO_SMALL; completed results are retained.
     pub written: usize,

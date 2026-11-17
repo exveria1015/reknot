@@ -47,6 +47,20 @@ impl CodeLease {
         self.executions.fetch_add(1, Ordering::AcqRel);
         CallGuard(self.clone())
     }
+    pub(crate) fn pin_task_cleanup_failure(&self, error: crate::ServiceError) {
+        #[cfg(feature = "jit")]
+        if let Some(tracking) = &self.jit {
+            tracking.pin(crate::jit::CoffRetentionReason::TaskCleanupFailed(error));
+        }
+        #[cfg(feature = "native")]
+        if let Some(id) = self.native_id() {
+            crate::retention::update(id, |record| {
+                record.task_cleanup_failure.get_or_insert(error);
+            });
+        }
+        #[cfg(not(any(feature = "native", feature = "jit")))]
+        let _ = error;
+    }
 }
 
 /// Lives on the host stack until the foreign call has returned. It deliberately

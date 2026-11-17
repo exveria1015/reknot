@@ -12,6 +12,7 @@ struct Probe {
     cancelled: Cell<bool>,
     starts: Cell<usize>,
     drops: Cell<usize>,
+    fail_cleanup: Cell<bool>,
     replies: RefCell<Vec<Vec<u8>>>,
 }
 struct Session(Rc<Probe>);
@@ -34,6 +35,7 @@ impl Future for Io {
 impl Drop for Io {
     fn drop(&mut self) {
         self.probe.drops.set(self.probe.drops.get() + 1);
+        assert!(!self.probe.fail_cleanup.get(), "host I/O cleanup failed");
     }
 }
 impl HostResource for Session {
@@ -105,6 +107,64 @@ fn host_waits_and_copies_input_and_destroys_io_before_request_completion() {
     assert_eq!(poll(&mut task), Poll::Ready(RunStatus::Done));
     assert_eq!(*probe.replies.borrow(), [b"hello".to_vec()]);
     assert_eq!(router.in_flight(), 0);
+}
+
+#[test]
+#[cfg_attr(
+    miri,
+    ignore = "unconfirmed cleanup is intentionally retained until process exit"
+)]
+fn failed_io_cleanup_notifies_restart_and_retains_the_operation() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use std::task::Wake;
+
+    #[derive(Default)]
+    struct WakeCount(AtomicUsize);
+    impl Wake for WakeCount {
+        fn wake(self: Arc<Self>) {
+            self.0.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    let (mut router, _, session, probe) = setup(AsyncLimits {
+        max_operations: 1,
+        ..AsyncLimits::default()
+    });
+    let mut task = router.dispatch(session.id(), b"hello").unwrap();
+    assert!(poll(&mut task).is_pending());
+    let next = unsafe { router.prepare_api(*hot_handler_api()) }.unwrap();
+    let mut restart = router
+        .restart(next, |_, state, _| Ok(state.clone()))
+        .unwrap();
+    let wake = Arc::new(WakeCount::default());
+    let waker = Waker::from(wake.clone());
+    let mut restart_cx = Context::from_waker(&waker);
+    assert!(Pin::new(&mut restart).poll(&mut restart_cx).is_pending());
+
+    probe.fail_cleanup.set(true);
+    probe.ready.set(true);
+    assert!(poll(&mut task).is_pending());
+    assert_eq!(
+        task.activity_error(),
+        Some(ServiceError::ASYNC_CLEANUP_FAILED)
+    );
+    assert!(wake.0.load(Ordering::Relaxed) > 0);
+    assert!(matches!(
+        Pin::new(&mut restart).poll(&mut restart_cx),
+        Poll::Ready(Err(RouteError::ActivityFailed { generation: 1 }))
+    ));
+    drop(restart);
+    assert_eq!(router.generation(), 1);
+    assert!(!router.is_accepting());
+    assert!(!router.acknowledge_activity_failure(1));
+    assert!(poll(&mut task).is_pending());
+    assert_eq!(router.in_flight(), 1);
+    router.resume().unwrap();
+    let mut second = router.dispatch(session.id(), b"second").unwrap();
+    assert!(poll(&mut second).is_pending());
+    assert_eq!(poll(&mut second), Poll::Ready(RunStatus::Error));
+    assert_eq!((probe.starts.get(), probe.drops.get()), (1, 1));
 }
 
 #[test]

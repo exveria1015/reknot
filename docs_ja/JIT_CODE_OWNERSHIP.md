@@ -190,7 +190,9 @@ entry・ABIの拒否時はManagedでも回収不能として保持します。�
 ## 土台と成果物の同一性を検証するAPI
 
 通常の二層リロードには、パスを直接渡す低水準APIの代わりに `LayeredArtifact` と `LayeredEngine` を
-使えます。safeな `LayeredArtifact::read` はサイズ制限付きschema 2のCOFFまたはschema 3のELF manifestを読み、
+使えます。safeな `LayeredArtifact::read` は、サイズ制限内のschema 2のCOFFまたはschema 3のELF manifestを受け取ります。
+manifestのディレクトリ配下にある通常ファイルを対象にします。キャッシュが別にある場合は、manifestと同じ場所の付属オブジェクトを
+使うか、許可するキャッシュディレクトリを `LayeredArtifact::read_in` で指定します。
 対応する構成か検査してから、サイズとSHA-256が一致するオブジェクトのバイト列を保持します。後からパスを差し替えても、
 この取得済みオブジェクトは変わりません。schema 1は検証済みと見なさず拒否します。
 
@@ -258,8 +260,9 @@ manifestは256 KiB、各DLLは256 MiB、COFFは既定32 MiBまでです。COFF�
 
 `-Offline` を使う場合はCargo.lockと依存キャッシュを先に用意してください。ワークスペースのdev profileは
 panic=unwind、lto=falseにします。スクリプトは動的std、unwind table、logicのcodegen unit数1を固定し、
-終了時には呼び出し元の環境変数を復元します。logicの依存グラフからsupportを特定し、解決済みfeaturesで
-ビルドしてから、コンパイラーのstd DLL・support DLL・Cargo.lockを固定したままlogicをコンパイルします。
+終了時には呼び出し元の環境変数を復元します。logicの依存グラフからsupportを特定し、logicをコンパイルした
+Cargo呼び出しが報告したsupportを取り込みます。コンパイル中はstdlibのDLLとCargo.lockを固定し、
+support DLLはCargo終了後に読み取り共有で開きます。
 `RUSTC_WRAPPER` または `RUSTC_WORKSPACE_WRAPPER` を指定した環境は拒否します。
 ローカルのCargo設定も信頼できる必要があります。通常のSDK依存crateを自動で二層化する機能ではありません。
 
@@ -271,7 +274,8 @@ Cargoは `--emit=obj` を追加しても通常のリンク成果物を生成し�
 処理性能が維持されるとは判断できないため、対象ワークロードでも測定してください。
 
 schema 2の付属JSONは、`-CacheDirectory` 内（省略時は出力先に隣接）の `foundation/` と `objects/` に
-ハッシュで配置した不変コピーを参照します。便宜用の `.obj` は検証付きロードの入力には使いません。毎回異なるstaging
+ハッシュで配置した不変コピーを参照します。キャッシュがmanifestのディレクトリ配下にないときは、付属の `.obj` も
+サイズ・ハッシュを照合して使えます。毎回異なるstaging
 オブジェクトを生成し、Cargoの古い成果物を誤って証明することを避け、manifestを最後に公開します。
 旧コピーは既存ホストが使えるように保持します。
 

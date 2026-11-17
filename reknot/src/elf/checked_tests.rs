@@ -234,7 +234,8 @@ fn identity(manifest: &Path, preload: bool) {
         );
         return;
     }
-    let dir = manifest.parent().unwrap().join("identity-copies");
+    let root = manifest.parent().unwrap();
+    let dir = root.join("identity-copies");
     std::fs::create_dir(&dir).unwrap();
     for key in ["std_library", "support_library"] {
         let path = Path::new(value["foundation"][key]["path"].as_str().unwrap());
@@ -243,17 +244,22 @@ fn identity(manifest: &Path, preload: bool) {
         value["foundation"][key]["path"] = serde_json::json!(copy);
     }
     let path = dir.join("logic.o.json");
+    let trusted_copy = || unsafe {
+        LayeredArtifact::read_in(&path, root)
+            .unwrap()
+            .into_trusted()
+    };
     let save =
         |v: &serde_json::Value| std::fs::write(&path, serde_json::to_vec(v).unwrap()).unwrap();
     let mut wrong = value.clone();
     wrong["foundation"]["support_library"]["sha256"] = "0".repeat(64).into();
     save(&wrong);
     assert!(matches!(
-        LayeredEngine::open(&trusted(&path), CoffLimits::default()),
+        LayeredEngine::open(&trusted_copy(), CoffLimits::default()),
         Err(JitError::Identity(_))
     ));
     save(&value);
-    let captured = trusted(&path);
+    let captured = trusted_copy();
     let mut engine = LayeredEngine::open(&captured, CoffLimits::default()).unwrap();
     let mut count = 0;
     for fd in std::fs::read_dir("/proc/self/fd").unwrap().flatten() {
@@ -283,7 +289,7 @@ fn identity(manifest: &Path, preload: bool) {
         )
         .unwrap();
     }
-    LayeredEngine::open(&trusted(&path), CoffLimits::default()).unwrap();
+    LayeredEngine::open(&trusted_copy(), CoffLimits::default()).unwrap();
     let loaded = engine
         .load_managed(unsafe { captured.into_managed() })
         .unwrap();
@@ -295,10 +301,10 @@ fn identity(manifest: &Path, preload: bool) {
     wrong["foundation"]["cargo_lock_sha256"] = "1".repeat(64).into();
     save(&wrong);
     assert!(
-        matches!(LayeredEngine::open(&trusted(&path), CoffLimits::default()), Err(JitError::Identity(s)) if s.contains("restart required"))
+        matches!(LayeredEngine::open(&trusted_copy(), CoffLimits::default()), Err(JitError::Identity(s)) if s.contains("restart required"))
     );
     assert!(matches!(
-        engine.load(trusted(&path)),
+        engine.load(trusted_copy()),
         Err(JitError::Identity(_))
     ));
     drop(router);

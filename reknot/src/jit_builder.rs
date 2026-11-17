@@ -517,18 +517,6 @@ impl Builder<'_> {
         )
         .join("Cargo.lock");
         let lock = Frozen::read(&lock_path, 64 * 1024 * 1024)?;
-        let features = nodes
-            .iter()
-            .find(|n| n["id"] == support_id)
-            .ok_or("missing support node".to_owned())?["features"]
-            .clone();
-        let mut support_features = features
-            .as_array()
-            .ok_or("missing support features".to_owned())?
-            .iter()
-            .map(|v| v.as_str().unwrap().to_owned())
-            .collect::<Vec<_>>();
-        support_features.sort();
         let support_path = self.target.join(target).join("debug").join(if elf {
             format!("lib{}.so", a.support_target)
         } else {
@@ -544,10 +532,12 @@ impl Builder<'_> {
         ];
         let prior: Option<Value> = foundation_manifest
             .map(|path| {
-                serde_json::from_slice(&read_limit(path, 256 * 1024)?).map_err(|e| e.to_string())
+                let bytes =
+                    super::artifact::read_manifest_bytes(path).map_err(|e| e.to_string())?;
+                serde_json::from_slice(&bytes).map_err(|e| e.to_string())
             })
             .transpose()?;
-        let expected_build = if let Some(prior) = &prior {
+        if let Some(prior) = &prior {
             let foundation = &prior["foundation"];
             let std_record = library_record(foundation, "std", elf);
             require(
@@ -559,34 +549,8 @@ impl Builder<'_> {
                     && std_record["sha256"] == hash(&std.bytes)
                     && std_record["bytes"] == std.bytes.len() as u64
                     && foundation["cargo_lock_sha256"] == hash(&lock.bytes)
-                    && foundation["support_build"]["package_id"] == support_id
-                    && foundation["support_build"]["features"] == json!(support_features),
+                    && foundation["support_build"]["package_id"] == support_id,
                 "foundation reuse identity differs",
-            )?;
-            foundation["support_build"].clone()
-        } else {
-            if !is_current("before_support_cargo") {
-                return Ok(BuildOutcome::Superseded("before_support_cargo"));
-            }
-            let mut args = build_args.clone();
-            args.extend([
-                "--package".into(),
-                support_id.into(),
-                "--lib".into(),
-                "--no-default-features".into(),
-            ]);
-            if !support_features.is_empty() {
-                args.extend(["--features".into(), support_features.join(",").into()]);
-            }
-            support_build(&self.cargo("build", args, true)?, support_id, &support_path)?
-        };
-        let support = Frozen::read(&support_path, 256 * 1024 * 1024)?;
-        if let Some(prior) = &prior {
-            let record = library_record(&prior["foundation"], "support", elf);
-            require(
-                record["sha256"] == hash(&support.bytes)
-                    && record["bytes"] == support.bytes.len() as u64,
-                "support changed before logic build",
             )?;
         }
         let (staging, reserved) = Temporary::create(&self.output, if elf { "o" } else { "obj" })?;
@@ -619,16 +583,26 @@ impl Builder<'_> {
         if !is_current("before_logic_cargo") {
             return Ok(BuildOutcome::Superseded("before_logic_cargo"));
         }
+        // Cargo metadata can unify features from unrelated workspace members.
+        // Capture the support artifact from the same compilation as the logic
+        // object, after Cargo is free to replace its writable outputs.
         let generated = self.cargo("rustc", args, true);
         // A superseded compile error must not trigger a foundation-reuse retry.
         if !is_current("after_logic_cargo") {
             return Ok(BuildOutcome::Superseded("after_logic_cargo"));
         }
-        let actual = support_build(&generated?, support_id, &support_path)?;
-        require(
-            actual == expected_build,
-            "Cargo selected a different support profile/features for logic",
-        )?;
+        let support_build = support_build(&generated?, support_id, &support_path)?;
+        let support = Frozen::read(&support_path, 256 * 1024 * 1024)?;
+        if let Some(prior) = &prior {
+            let foundation = &prior["foundation"];
+            let record = library_record(foundation, "support", elf);
+            require(
+                foundation["support_build"] == support_build
+                    && record["sha256"] == hash(&support.bytes)
+                    && record["bytes"] == support.bytes.len() as u64,
+                "logic's support build differs from the requested foundation",
+            )?;
+        }
         std.verify()?;
         support.verify()?;
         lock.verify()?;
@@ -656,7 +630,7 @@ impl Builder<'_> {
         let foundation_key =
             hash(format!("{}\n{}\n{}", hash(&std.bytes), hash(&support.bytes), info).as_bytes());
         let directory = self.cache.join("foundation").join(foundation_key);
-        let mut foundation = json!({"rustc":info,"target":target,"handler_abi":5,"panic":"unwind","tls":"generation-local","prefer_dynamic":true,"rustflags":flags,"cargo_lock_sha256":hash(&lock.bytes),"support_build":expected_build});
+        let mut foundation = json!({"rustc":info,"target":target,"handler_abi":5,"panic":"unwind","tls":"generation-local","prefer_dynamic":true,"rustflags":flags,"cargo_lock_sha256":hash(&lock.bytes),"support_build":support_build});
         foundation[if elf { "std_library" } else { "std_dll" }] =
             immutable(&directory.join(stds[0].file_name().unwrap()), &std.bytes)?;
         foundation[if elf {

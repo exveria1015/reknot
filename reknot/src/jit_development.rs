@@ -1603,7 +1603,8 @@ fn produce(
     } else {
         "obj.json"
     });
-    let captured = read_limit(&manifest, 256 * 1024).map_err(build_failed)?;
+    let captured = super::artifact::read_manifest_bytes(&manifest)
+        .map_err(|error| build_failed(error.to_string()))?;
     if value["manifest_sha256"] != hash(&captured) {
         return Err(BuildFailure {
             state: LayeredDevState::Rejected,
@@ -1633,12 +1634,15 @@ fn finish_build(
         mut metrics,
     } = produced;
     let read = Instant::now();
-    let artifact =
-        LayeredArtifact::from_manifest_bytes(&captured, job.options.limits.load.max_object_bytes)
-            .map_err(|e| BuildFailure {
-            state: LayeredDevState::Rejected,
-            message: e.to_string(),
-        })?;
+    let artifact = LayeredArtifact::from_manifest_bytes(
+        &captured,
+        &job.options.cache_directory,
+        job.options.limits.load.max_object_bytes,
+    )
+    .map_err(|e| BuildFailure {
+        state: LayeredDevState::Rejected,
+        message: e.to_string(),
+    })?;
     metrics.artifact_read_ms = read.elapsed().as_secs_f64() * 1000.0;
     metrics.worker_ms = start.elapsed().as_secs_f64() * 1000.0;
     let receipt = serde_json::json!({"version":1,"session":job.session,"job":job.id,"revision":job.revision,

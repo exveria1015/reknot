@@ -94,9 +94,9 @@ cargo run -p reknot --no-default-features --features jit-dev --bin reknot-build 
 Use `--foundation-manifest` for reuse, `--features`/`--no-default-features` for dependency
 selection, and `--help` for other settings. `jit::builder::build(&BuildOptions)` runs the same
 library implementation. It locks the Cargo output directory and checks the actual support
-artifact, compiler and lockfile. Foundation/object files are content-addressed; existing outputs
-are not overwritten. Windows freezes foundation files with read sharing; Linux compares bytes
-before and after the build. Artifacts establish identity, not code trust.
+artifact, compiler and lockfile. The support profile and features come from the Cargo invocation
+that compiles logic. Foundation and object files are published at new locations according to their
+content hashes. Reuse verifies the observed support build and bytes against the prior manifest.
 
 ## Inputs, foundation and cache
 

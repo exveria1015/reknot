@@ -19,6 +19,8 @@ struct Probe {
     rejected: Cell<usize>,
     child_started: Cell<usize>,
     child_finished: Cell<usize>,
+    fail_root_cleanup: Cell<bool>,
+    root_drops: Cell<usize>,
 }
 thread_local! { static PROBE: RefCell<Option<Rc<Probe>>> = const { RefCell::new(None) }; }
 fn current_probe() -> Rc<Probe> {
@@ -87,9 +89,23 @@ impl HostResource for Session {
     }
 }
 
+struct RootCleanup(Rc<Probe>);
+impl Drop for RootCleanup {
+    fn drop(&mut self) {
+        self.0.root_drops.set(self.0.root_drops.get() + 1);
+        panic!("request cleanup failed");
+    }
+}
+
 #[reload_handler(KEY, state = STATE)]
 async fn root(ctx: RequestContext) -> Result<(), ServiceError> {
     let probe = current_probe();
+    if probe.fail_root_cleanup.get() {
+        let cleanup = RootCleanup(probe);
+        std::future::pending::<()>().await;
+        drop(cleanup);
+        return Ok(());
+    }
     if ctx.input() == b"children" || ctx.input() == b"child_panic" {
         let panic = ctx.input() == b"child_panic";
         ctx.spawn_child(move |stop| async move {
@@ -161,6 +177,22 @@ fn cx() -> Context<'static> {
 }
 fn candidate(router: &RequestRouter) -> PreparedHandler {
     unsafe { router.prepare_api(*hot_handler_api()) }.unwrap()
+}
+
+#[test]
+fn failed_request_destructor_is_reported_after_cancellation() {
+    let (mut router, session, probe) = setup();
+    probe.fail_root_cleanup.set(true);
+    let mut task = router.dispatch(session.id(), &[]).unwrap();
+    assert!(poll(&mut task).is_pending());
+    router.activate(candidate(&router)).unwrap();
+    assert_eq!(router.cancel_retired_generation(1), 1);
+    assert_eq!(poll(&mut task), Poll::Ready(RunStatus::Error));
+    assert_eq!(task.activity_error(), Some(ServiceError::PANICKED));
+    assert_eq!(router.in_flight(), 0);
+    assert!(router.acknowledge_activity_failure(1));
+    drop(task);
+    assert_eq!(probe.root_drops.get(), 1);
 }
 
 #[test]

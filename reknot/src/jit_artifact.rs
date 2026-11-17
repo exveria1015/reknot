@@ -11,10 +11,11 @@ use super::{CoffLimits, JitError, JitLoadMetrics};
 use crate::LoadedHandler;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::fs::File;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
+
+#[path = "jit_artifact_file.rs"]
+mod file;
 
 const MAX_MANIFEST_BYTES: usize = 256 * 1024;
 pub(super) const MAX_DLL_BYTES: u64 = 256 * 1024 * 1024;
@@ -88,17 +89,11 @@ fn normalize_hash(value: &mut str) -> Result<(), JitError> {
     value.make_ascii_lowercase();
     Ok(())
 }
-fn read_bounded(path: &Path, limit: usize) -> Result<Vec<u8>, JitError> {
-    let mut bytes = Vec::new();
-    File::open(path)
-        .map_err(JitError::Io)?
-        .take(limit as u64 + 1)
-        .read_to_end(&mut bytes)
-        .map_err(JitError::Io)?;
-    if bytes.len() > limit {
-        return Err(JitError::ObjectTooLarge { limit });
-    }
-    Ok(bytes)
+pub(super) fn read_manifest_bytes(path: &Path) -> Result<Vec<u8>, JitError> {
+    file::read(path, MAX_MANIFEST_BYTES, None).map_err(|e| match e {
+        JitError::ObjectTooLarge { .. } => manifest_error("manifest exceeds 256 KiB"),
+        other => other,
+    })
 }
 fn validate_file(record: &mut FileRecord, limit: u64) -> Result<(), JitError> {
     if !record.path.is_absolute()
@@ -208,7 +203,11 @@ pub struct LayeredArtifact {
     object: Box<[u8]>,
 }
 impl LayeredArtifact {
-    /// Read with the default 32 MiB object limit. Schema 1 is intentionally rejected.
+    /// Read a manifest and capture a regular object file with the default 32 MiB
+    /// limit. The manifest's directory is the allowed object root. If the
+    /// manifest refers to an object elsewhere, read the producer's companion
+    /// file next to the manifest (the path with the final `.json` removed).
+    /// Use [`Self::read_in`] for a separate authorized object cache.
     pub fn read(path: impl AsRef<Path>) -> Result<Self, JitError> {
         Self::read_with_limit(path, super::JitLimits::default().max_object_bytes)
     }
@@ -216,30 +215,68 @@ impl LayeredArtifact {
         path: impl AsRef<Path>,
         max_object_bytes: usize,
     ) -> Result<Self, JitError> {
-        if max_object_bytes == 0 || max_object_bytes >= isize::MAX as usize {
-            return Err(JitError::InvalidLimits);
-        }
-        let bytes = read_bounded(path.as_ref(), MAX_MANIFEST_BYTES).map_err(|e| match e {
-            JitError::ObjectTooLarge { .. } => manifest_error("manifest exceeds 256 KiB"),
-            other => other,
-        })?;
-        Self::from_manifest_bytes(&bytes, max_object_bytes)
+        validate_object_limit(max_object_bytes)?;
+        let path = path.as_ref();
+        let manifest = parse_manifest(&read_manifest_bytes(path)?, max_object_bytes)?;
+        let directory = path
+            .parent()
+            .filter(|directory| !directory.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        let root = file::Root::new(directory)?;
+        let declared = &manifest.logic.artifact.path;
+        let object = if root.contains(declared) {
+            file::read(declared, max_object_bytes, Some(&root))?
+        } else if path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("json"))
+        {
+            let companion = root.resolved.join(path.file_stem().unwrap());
+            file::read(&companion, max_object_bytes, Some(&root)).map_err(|error| match error {
+                JitError::Io(io) if io.kind() == std::io::ErrorKind::NotFound => manifest_error(
+                    "object is outside the manifest directory and the companion is missing; use read_in with its trusted root",
+                ),
+                other => other,
+            })?
+        } else {
+            return Err(manifest_error(
+                "object path is outside the manifest directory",
+            ));
+        };
+        Self::capture(manifest, object)
     }
-    pub(crate) fn from_manifest_bytes(
-        bytes: &[u8],
+
+    /// Read the declared object from an explicitly authorized directory tree.
+    /// The manifest may be stored separately. No foreign code runs during this
+    /// call. Foundation libraries are opened only after accepting native trust.
+    pub fn read_in(path: impl AsRef<Path>, root: impl AsRef<Path>) -> Result<Self, JitError> {
+        Self::read_in_with_limit(path, root, super::JitLimits::default().max_object_bytes)
+    }
+
+    pub fn read_in_with_limit(
+        path: impl AsRef<Path>,
+        root: impl AsRef<Path>,
         max_object_bytes: usize,
     ) -> Result<Self, JitError> {
-        if bytes.len() > MAX_MANIFEST_BYTES
-            || max_object_bytes == 0
-            || max_object_bytes >= isize::MAX as usize
-        {
-            return Err(JitError::InvalidLimits);
-        }
-        let bytes = bytes.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(bytes);
-        let mut manifest: Manifest =
-            serde_json::from_slice(bytes).map_err(|e| manifest_error(e.to_string()))?;
-        manifest.validate(max_object_bytes)?;
-        let object = read_bounded(&manifest.logic.artifact.path, max_object_bytes)?;
+        validate_object_limit(max_object_bytes)?;
+        Self::from_manifest_bytes(
+            &read_manifest_bytes(path.as_ref())?,
+            root.as_ref(),
+            max_object_bytes,
+        )
+    }
+
+    pub(crate) fn from_manifest_bytes(
+        bytes: &[u8],
+        root: &Path,
+        max_object_bytes: usize,
+    ) -> Result<Self, JitError> {
+        let manifest = parse_manifest(bytes, max_object_bytes)?;
+        let root = file::Root::new(root)?;
+        let object = file::read(&manifest.logic.artifact.path, max_object_bytes, Some(&root))?;
+        Self::capture(manifest, object)
+    }
+
+    fn capture(manifest: Manifest, object: Vec<u8>) -> Result<Self, JitError> {
         if object.len() as u64 != manifest.logic.artifact.bytes
             || digest(&object) != manifest.logic.artifact.sha256
         {
@@ -281,6 +318,25 @@ impl LayeredArtifact {
     pub unsafe fn into_trusted(self) -> TrustedLayeredArtifact {
         TrustedLayeredArtifact(self)
     }
+}
+
+fn validate_object_limit(max_object_bytes: usize) -> Result<(), JitError> {
+    if max_object_bytes == 0 || max_object_bytes >= isize::MAX as usize {
+        return Err(JitError::InvalidLimits);
+    }
+    Ok(())
+}
+
+fn parse_manifest(bytes: &[u8], max_object_bytes: usize) -> Result<Manifest, JitError> {
+    validate_object_limit(max_object_bytes)?;
+    if bytes.len() > MAX_MANIFEST_BYTES {
+        return Err(manifest_error("manifest exceeds 256 KiB"));
+    }
+    let bytes = bytes.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(bytes);
+    let mut manifest: Manifest =
+        serde_json::from_slice(bytes).map_err(|e| manifest_error(e.to_string()))?;
+    manifest.validate(max_object_bytes)?;
+    Ok(manifest)
 }
 
 /// Native-code trust is attached to the captured object and its declared
@@ -614,6 +670,42 @@ mod tests {
         assert_eq!(&*artifact.object, original);
         assert_eq!(digest(&artifact.object), artifact.object_sha256());
     }
+
+    #[test]
+    fn object_reads_respect_the_authorized_root_and_allow_a_matching_companion() {
+        let (path, mut manifest) = fixture();
+        let export = path.parent().unwrap().join("export");
+        std::fs::create_dir(&export).unwrap();
+        let exported_manifest = export.join("copy.obj.json");
+        write(&exported_manifest, &manifest);
+        assert!(matches!(
+            LayeredArtifact::read_in(&exported_manifest, &export),
+            Err(JitError::Manifest(_))
+        ));
+        let from_cache =
+            LayeredArtifact::read_in(&exported_manifest, path.parent().unwrap()).unwrap();
+        std::fs::copy(&manifest.logic.artifact.path, export.join("copy.obj")).unwrap();
+        let from_companion = LayeredArtifact::read(&exported_manifest).unwrap();
+        assert_eq!(from_companion.object_sha256(), from_cache.object_sha256());
+        #[cfg(target_os = "linux")]
+        {
+            let link = export.join("alias.obj");
+            std::os::unix::fs::symlink(&manifest.logic.artifact.path, &link).unwrap();
+            manifest.logic.artifact.path = link;
+            write(&exported_manifest, &manifest);
+            assert!(matches!(
+                LayeredArtifact::read_in(&exported_manifest, &export),
+                Err(JitError::Manifest(_))
+            ));
+        }
+        manifest.logic.artifact.path = export.join("directory.obj");
+        std::fs::create_dir(&manifest.logic.artifact.path).unwrap();
+        write(&exported_manifest, &manifest);
+        assert!(matches!(
+            LayeredArtifact::read(&exported_manifest),
+            Err(JitError::Manifest(_))
+        ));
+    }
     #[test]
     fn elf_schema_preserves_case_and_requires_pic_and_matching_target() {
         let (path, mut manifest) = fixture();
@@ -642,7 +734,8 @@ mod tests {
             foundation.insert(new.into(), record);
         }
         let bytes = serde_json::to_vec(&value).unwrap();
-        let original = LayeredArtifact::from_manifest_bytes(&bytes, 4096).unwrap();
+        let root = path.parent().unwrap();
+        let original = LayeredArtifact::from_manifest_bytes(&bytes, root, 4096).unwrap();
         write(&path, &manifest);
         assert_eq!(
             original.foundation_id(),
@@ -678,7 +771,11 @@ mod tests {
             let mut invalid = value.clone();
             *invalid.pointer_mut(pointer).unwrap() = replacement;
             assert!(matches!(
-                LayeredArtifact::from_manifest_bytes(&serde_json::to_vec(&invalid).unwrap(), 4096),
+                LayeredArtifact::from_manifest_bytes(
+                    &serde_json::to_vec(&invalid).unwrap(),
+                    root,
+                    4096
+                ),
                 Err(JitError::Manifest(_))
             ));
         }

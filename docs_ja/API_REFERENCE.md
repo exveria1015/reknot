@@ -202,7 +202,9 @@ RouterOptions とともに `load_with_environment` / `from_api_with_environment`
 SDK ハンドルは移動しません。`ServiceWorker::shutdown()` と await で I/O スレッドを終了・join します。
 詳細は [非同期サービスと複数スレッド](ASYNC_SERVICES_AND_THREADS.md) を参照してください。
 ServiceError と捕捉した unwind は RunStatus::Error へ変換し、元の詳細エラーは現在の RequestTask から取得できません。
-デストラクタの panic や panic=abort からの復旧は対象外です。
+SDK生成の要求Futureは、破棄時の unwind をlogic側で捕捉します。タスク破棄の通知に対応したホストでは、
+`RequestTask::activity_error()` が `PANICKED` を返し、該当イメージを保持します。
+旧SDKのホストでは、破棄失敗時にlogicがコード参照を保持します。この動作には `panic=unwind` でのlogic再ビルドが必要です。
 
 ### 受付と実行
 
@@ -302,7 +304,10 @@ Rust COFF/bigobjローダーで同じ二層の所有権契約を提供し、LLVM
 `CoffLimits` はBSSやページ余白を含む実割り当ての予算も指定します。
 未対応の入力は実行前に拒否し、公開したコードは保持します。
 `LayeredArtifact::read(manifest)` はschema 2のCOFFまたはschema 3のELFを読み、
-サイズ・ハッシュを検証してバイト列を保持します。`unsafe into_trusted()` でコードと生成元への
+manifestのディレクトリ配下にある通常ファイルのサイズ・ハッシュを検証してバイト列を保持します。
+キャッシュが別の場所にある場合は、manifestと対になる同じ場所のオブジェクトを使えます。
+明示したディレクトリ配下からmanifest指定のオブジェクトを読むには `read_in(manifest, root)` を使います。
+`unsafe into_trusted()` でコードと生成元への
 信頼を明示した後は、safeな `LayeredEngine::open(&trusted, LayeredLimits)` と `load(trusted)` が
 常駐基盤を検証して不一致のlogicを拒否します。検証済み基盤はプロセスごとに一つです。
 Windowsでは両DLLのファイルを固定し、Linuxではseal済みstd/supportとファイル記述子を終了まで保持します。

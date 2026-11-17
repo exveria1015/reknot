@@ -175,18 +175,6 @@ try {
         if ($taskLockHash -ne $taskPrior.foundation.cargo_lock_sha256) { throw 'Cargo.lock changed; rebuild the foundation and restart the host' }
         $taskSupportId = $taskPrior.foundation.support_build.package_id
         $taskLogicId = $Package
-        $taskDlls = @($taskSupport)
-        $taskSupportArtifact = [pscustomobject]@{
-            features = @($taskPrior.foundation.support_build.features)
-            filenames = @($taskSupport)
-            profile = [pscustomobject]@{
-                opt_level = $taskPrior.foundation.support_build.opt_level
-                debuginfo = $taskPrior.foundation.support_build.debuginfo
-                debug_assertions = $taskPrior.foundation.support_build.debug_assertions
-                overflow_checks = $taskPrior.foundation.support_build.overflow_checks
-                test = $false
-            }
-        }
     } else {
         $taskMetadataArgs = @($taskBaseArgs[0], 'metadata') + $taskBaseArgs[1..($taskBaseArgs.Count-1)] + @('--format-version','1','--filter-platform','x86_64-pc-windows-msvc')
         if ($NoDefaultFeatures) { $taskMetadataArgs += '--no-default-features' }
@@ -220,24 +208,8 @@ try {
         $taskLock = Open-Frozen (Join-Path $taskMetadata.workspace_root 'Cargo.lock')
         $taskHandles.Add($taskLock)
         $taskLockHash = Get-StreamHash $taskLock
-        $taskSupportFeatures = @($taskNodes[$taskSupportId].features | Sort-Object -Unique)
-        $taskBuildSupport = @($taskBaseArgs[0], 'build') + $taskBuildBase + @('--package',$taskSupportId,'--lib','--no-default-features')
-        if ($taskSupportFeatures.Count -gt 0) { $taskBuildSupport += @('--features', ($taskSupportFeatures -join ',')) }
-        $taskSupportArtifacts = @(Invoke-CargoJson $taskBuildSupport)
-        $taskSupportArtifact = Get-DllArtifact $taskSupportArtifacts $taskSupportId
-        $taskDlls = @($taskSupportArtifact.filenames | Where-Object { [IO.Path]::GetExtension($_) -eq '.dll' })
-        if ($taskDlls.Count -ne 1 -or (Get-LocalPath $taskDlls[0]) -ne $taskSupport) {
-            throw 'SupportDll must be the actual DLL reported by Cargo for the selected dependency'
-        }
     }
-    $taskSupportFile = Open-Frozen $taskDlls[0]
-    $taskHandles.Add($taskSupportFile)
-    $taskSupportHash = Get-StreamHash $taskSupportFile
-    if ($FoundationManifest -and ($taskSupportHash -ne $taskPrior.foundation.support_dll.sha256 -or $taskSupportFile.Length -ne $taskPrior.foundation.support_dll.bytes)) {
-        throw 'Support DLL changed; rebuild the foundation and restart the host'
-    }
-    # Freeze the actual compiler input while building logic. If Cargo tries to
-    # rebuild support with a different feature/profile set, it must fail closed.
+    # Resolve support features in the same Cargo invocation that compiles logic.
     $taskFlags = @('-C','codegen-units=1','-C','lto=off','-C','panic=unwind',
         '-C',"opt-level=$Optimization",'-C',"debuginfo=$DebugInfo","--emit=obj=$taskStaging")
     $taskBuildLogic = @($taskBaseArgs[0], 'rustc') + $taskBuildBase + @('--package',$taskLogicId,'--lib','--crate-type','lib')
@@ -245,11 +217,24 @@ try {
     if ($Features.Count -gt 0) { $taskBuildLogic += @('--features', ($Features -join ',')) }
     $taskBuildLogic += @('--') + $taskFlags
     $taskLogicArtifacts = @(Invoke-CargoJson $taskBuildLogic)
-    $taskActualSupport = Get-DllArtifact $taskLogicArtifacts $taskSupportId
-    if ((($taskActualSupport.features | Sort-Object) -join ',') -ne (($taskSupportArtifact.features | Sort-Object) -join ',') -or
-        ($taskActualSupport.profile | ConvertTo-Json -Compress) -ne ($taskSupportArtifact.profile | ConvertTo-Json -Compress) -or
-        $taskActualSupport.filenames[0] -ne $taskSupportArtifact.filenames[0]) {
-        throw 'Cargo selected a different support build for logic; no manifest will be published'
+    $taskSupportArtifact = Get-DllArtifact $taskLogicArtifacts $taskSupportId
+    $taskDlls = @($taskSupportArtifact.filenames | Where-Object { [IO.Path]::GetExtension($_) -eq '.dll' })
+    if ($taskDlls.Count -ne 1 -or (Get-LocalPath $taskDlls[0]) -ne $taskSupport -or $taskSupportArtifact.profile.test) {
+        throw 'SupportDll must be the actual DLL reported by Cargo for the selected dependency'
+    }
+    $taskSupportFile = Open-Frozen $taskDlls[0]
+    $taskHandles.Add($taskSupportFile)
+    $taskSupportHash = Get-StreamHash $taskSupportFile
+    if ($FoundationManifest) {
+        $taskExpected = $taskPrior.foundation.support_build
+        $taskProfile = $taskSupportArtifact.profile
+        if ($taskSupportHash -ne $taskPrior.foundation.support_dll.sha256 -or
+            $taskSupportFile.Length -ne $taskPrior.foundation.support_dll.bytes -or
+            (($taskSupportArtifact.features | Sort-Object) -join ',') -ne (($taskExpected.features | Sort-Object) -join ',') -or
+            $taskProfile.opt_level -ne $taskExpected.opt_level -or $taskProfile.debuginfo -ne $taskExpected.debuginfo -or
+            $taskProfile.debug_assertions -ne $taskExpected.debug_assertions -or $taskProfile.overflow_checks -ne $taskExpected.overflow_checks) {
+            throw 'Logic support build differs from the requested foundation; no manifest will be published'
+        }
     }
     if ((@(& $taskCompiler -vV) -join "`n") -ne $taskInfo) { throw 'Compiler identity changed during build' }
     $taskObjectFile = Open-Frozen $taskStaging

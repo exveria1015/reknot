@@ -131,7 +131,10 @@ impl fmt::Display for RouteError {
             }
             Self::RestartInProgress => write!(f, "restart is already in progress"),
             Self::ActivityFailed { generation } => {
-                write!(f, "registered activity failed in generation {generation}")
+                write!(
+                    f,
+                    "activity or task cleanup failed in generation {generation}"
+                )
             }
         }
     }
@@ -157,6 +160,7 @@ struct Generation {
     controls: RefCell<Vec<Weak<Control>>>,
     completion: Rc<RefCell<Option<std::task::Waker>>>,
     activity_failed: Cell<bool>,
+    unconfirmed_cleanup: Cell<bool>,
     environment: HandlerEnvironment,
     bindings: Vec<ServiceBinding>,
 }
@@ -420,6 +424,7 @@ impl RequestRouter {
                 controls: RefCell::new(Vec::new()),
                 completion: Rc::new(RefCell::new(None)),
                 activity_failed: Cell::new(false),
+                unconfirmed_cleanup: Cell::new(false),
                 environment,
                 bindings,
             }),
@@ -554,6 +559,7 @@ impl RequestRouter {
             controls: RefCell::new(Vec::new()),
             completion: self.active.completion.clone(),
             activity_failed: Cell::new(false),
+            unconfirmed_cleanup: Cell::new(false),
             environment: candidate.environment,
             bindings: candidate.bindings,
         });
@@ -604,7 +610,7 @@ impl RequestRouter {
             checkpoint.clone(),
             self.options.max_checkpoint_bytes,
             generation.image.as_ref().map(GenerationOwner::lease),
-            Rc::downgrade(&generation.scope),
+            Rc::downgrade(generation),
         );
         let (state_schema, state) = checkpoint
             .as_ref()

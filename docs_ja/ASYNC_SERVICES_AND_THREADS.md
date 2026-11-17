@@ -57,6 +57,9 @@ DLL 境界では Rust の `Vec` / Future / 接続を共有せず、C ABI の ID�
 終端結果の回収後に ID を解放します。保留中 ID の早期 release では停止を要求して保持します。
 
 ホスト Future の poll が panic した場合は終了確認を推定せず、Future を保持して以降 Pending にします。
+`Ready` を返した後の破棄が panic すると、`ServiceCall` は `ASYNC_CLEANUP_FAILED` を返します。
+操作枠と登録処理は保持され、`RequestTask::activity_error()` で失敗を確認できます。
+Restart は受付を停止したまま `RouteError::ActivityFailed` を返し、該当するDLL・JIT世代は保持されます。
 その状態からの一般的な自動復旧は提供しません。上限は SDK・キューが保持するデータに対するもので、
 アプリケーションが別途確保するメモリや、I/O ハンドラー内部の最大使用量を制限するものではありません。
 

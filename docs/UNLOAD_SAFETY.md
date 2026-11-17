@@ -10,6 +10,10 @@ Dropping a Router, completing a root request or dropping a Waker does not physic
 Hosts that can establish shutdown conditions, including external work and TLS, may use the low-level
 `unsafe reclaim_native_image(ArtifactId)`. Handler ABI remains at version 5.
 
+On Windows, dependencies of a copied native DLL are searched in the copy and
+executable directories, System32 and explicitly registered loader directories.
+Register any additional trusted directory with the Windows loader before loading the DLL.
+
 The host registry stores an owning reference immediately after loading, so code remains available after validation failure or a later unwind.
 `RequestTask`, registered work and Wakers passed outside the DLL also retain references to their execution generation.
 SDK host I/O uses host-owned notifications that can be invalidated when a request ends.
@@ -57,6 +61,7 @@ The reasons are listed below. Because external completion is the host's responsi
 | `CloseUncertain` | Retain the image and copy after a close failure; do not reuse the consumed handle |
 | `RegisteredLocals { count }` | Wait for registered generation-local ownership to end and destruction to return. The count includes uncertain residue |
 | `LocalCleanupFailed { count }` | Retain an image whose registered-local destruction failed. Do not run the same destructor again |
+| `TaskCleanupFailed(error)` | Keep the image after failed SDK request destruction or unconfirmed host I/O cleanup |
 
 If SDK conditions are not met, reclamation returns `ReclaimResult::Retained { reasons }`.
 On success it returns `Released { copy_removal_error }`, deleting the copy after releasing the loader reference.

@@ -416,16 +416,7 @@ pub mod __private {
         raw: *const crate::HandlerRequest,
         dispatch: impl FnOnce(RequestContext) -> Result<HandlerFuture, ServiceError>,
     ) -> TaskHandle {
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let context = RequestContext::from_raw(raw)?;
-            dispatch(context).map(crate::internal::make_handler_future)
-        }))
-        .ok()
-        .and_then(Result::ok)
-        .unwrap_or(TaskHandle {
-            data: std::ptr::null_mut(),
-            vtable: std::ptr::null(),
-        })
+        crate::internal::make_handler_request(raw, dispatch)
     }
     pub fn request_key(context: &RequestContext) -> Result<u64, ServiceError> {
         let bytes = context.input();

@@ -31,6 +31,7 @@ pub enum CoffRetentionReason {
     GenerationLocals,
     ManagedActivities,
     LocalCleanupFailed,
+    TaskCleanupFailed(crate::ServiceError),
     ActivityAbandoned,
     EntryRejected,
     UnwindRemovalFailed,

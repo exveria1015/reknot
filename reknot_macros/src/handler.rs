@@ -82,14 +82,9 @@ pub(crate) fn expand(mut input: ItemFn, options: Options) -> syn::Result<TokenSt
         unsafe extern "C" fn make_handler_request(
             raw: *const ::reknot::HandlerRequest,
         ) -> ::reknot::TaskHandle {
-            match ::reknot::RequestContext::from_raw(raw) {
-                Ok(context) => ::reknot::internal::make_handler_future(
-                    Box::pin(async move { #inner(context).await })
-                ),
-                Err(_) => ::reknot::TaskHandle {
-                    data: std::ptr::null_mut(), vtable: std::ptr::null(),
-                },
-            }
+            ::reknot::internal::make_handler_request(raw, |context| {
+                Ok(Box::pin(#inner(context)))
+            })
         }
 
         static HANDLER_API: ::reknot::HandlerApi =

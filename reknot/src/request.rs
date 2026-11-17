@@ -2,8 +2,9 @@ use crate::Checkpoint;
 use crate::{HostWaker, RunStatus, Services, TaskHandle, TaskVTable};
 use reknot_abi::services::{
     AccessGenerationLocalFn, HandlerHeader, HostTaskControl, HostTaskVTable,
-    HostTaskVTableCancellation, HostTaskVTableExt, MakeGenerationLocalFn, CANCELLATION_ABI_VERSION,
-    GENERATION_SERVICES_ABI_VERSION, TASK_CONTROL_ABI_VERSION,
+    HostTaskVTableCancellation, HostTaskVTableCleanup, HostTaskVTableExt, MakeGenerationLocalFn,
+    CANCELLATION_ABI_VERSION, GENERATION_SERVICES_ABI_VERSION, TASK_CLEANUP_ABI_VERSION,
+    TASK_CONTROL_ABI_VERSION,
 };
 use reknot_abi::services::{HandlerRequest, ResourceId, ServiceError, ServiceKey};
 use std::ffi::c_void;
@@ -27,6 +28,27 @@ impl TaskControl {
             return Err(ServiceError::FAILED);
         }
         Ok(Self(HostTaskControl { data, ..raw }))
+    }
+    pub(crate) fn try_clone(&self) -> Result<Self, ServiceError> {
+        // A live TaskControl owns one reference to a validated descriptor.
+        unsafe { Self::retain(self.0) }
+    }
+    pub(crate) fn report_cleanup_failure(&self, error: ServiceError) -> bool {
+        unsafe {
+            let size = std::mem::size_of::<HostTaskVTableCleanup>() as u32;
+            let header = self.0.vtable.cast::<HandlerHeader>().read();
+            if header.struct_size < size {
+                return false;
+            }
+            let table = self.0.vtable.cast::<HostTaskVTableCleanup>();
+            let cleanup = std::ptr::addr_of!((*table).cleanup).read();
+            if cleanup.abi_version != TASK_CLEANUP_ABI_VERSION || cleanup.struct_size < size {
+                return false;
+            }
+            let report = std::ptr::addr_of!((*table).cleanup_failed).read();
+            report(self.0.data, error);
+            true
+        }
     }
     fn extension(&self) -> Result<&HostTaskVTableExt, ServiceError> {
         unsafe {
@@ -329,13 +351,43 @@ impl RequestContext {
     }
 }
 
-struct HandlerFuture(Pin<Box<dyn Future<Output = RunStatus>>>);
+pub(crate) type RequestFuture = Pin<Box<dyn Future<Output = Result<(), ServiceError>>>>;
+
+struct HandlerFuture {
+    future: Pin<Box<dyn Future<Output = RunStatus>>>,
+    control: Option<TaskControl>,
+}
+
+/// Implementation hook for generated request factories.
+///
+/// # Safety
+/// `raw` must satisfy `RequestContext::from_raw`'s descriptor contract.
+#[doc(hidden)]
+pub unsafe fn make_handler_request(
+    raw: *const HandlerRequest,
+    make: impl FnOnce(RequestContext) -> Result<RequestFuture, ServiceError>,
+) -> TaskHandle {
+    crate::task::catch_callback(|| {
+        let context = RequestContext::from_raw(raw)?;
+        // This reference outlives the context held by the future itself.
+        let control = context.control.try_clone()?;
+        make(context).map(|future| wrap_future(future, Some(control)))
+    })
+    .ok()
+    .and_then(Result::ok)
+    .unwrap_or(TaskHandle {
+        data: std::ptr::null_mut(),
+        vtable: std::ptr::null(),
+    })
+}
 
 /// SDK support for reload_handler. User code first runs when the task is polled.
 #[doc(hidden)]
-pub fn make_handler_future(
-    future: Pin<Box<dyn Future<Output = Result<(), ServiceError>>>>,
-) -> TaskHandle {
+pub fn make_handler_future(future: RequestFuture) -> TaskHandle {
+    wrap_future(future, None)
+}
+
+fn wrap_future(future: RequestFuture, control: Option<TaskControl>) -> TaskHandle {
     let future = Box::pin(async move {
         match future.await {
             Ok(()) => RunStatus::Done,
@@ -343,17 +395,28 @@ pub fn make_handler_future(
         }
     });
     TaskHandle {
-        data: Box::into_raw(Box::new(HandlerFuture(future))).cast(),
+        data: Box::into_raw(Box::new(HandlerFuture { future, control })).cast(),
         vtable: &VTABLE,
     }
 }
 
 unsafe extern "C" fn poll(data: *mut c_void, waker: *const HostWaker) -> RunStatus {
     let future = &mut *data.cast::<HandlerFuture>();
-    crate::task::poll_result_future(future.0.as_mut(), waker)
+    crate::task::poll_result_future(future.future.as_mut(), waker)
 }
 unsafe extern "C" fn destroy(data: *mut c_void) {
-    drop(Box::from_raw(data.cast::<HandlerFuture>()));
+    let HandlerFuture { future, control } = *Box::from_raw(data.cast::<HandlerFuture>());
+    if crate::task::catch_callback(|| drop(future)).is_ok() {
+        return;
+    }
+    let Some(control) = control else {
+        return;
+    };
+    if !control.report_cleanup_failure(ServiceError::PANICKED) {
+        // Older SDK hosts have a code lease on the retained control,
+        // but no callback for recording this failure.
+        std::mem::forget(control);
+    }
 }
 static VTABLE: TaskVTable = TaskVTable {
     poll,

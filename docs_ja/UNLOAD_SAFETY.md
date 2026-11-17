@@ -10,6 +10,9 @@ Router の Drop、ルート要求の完了、Waker の破棄から物理アン�
 外部処理と TLS を含む終了条件を確認できるホストには、低水準の
 `unsafe reclaim_native_image(ArtifactId)` を提供します。Handler ABI 5 は変更していません。
 
+Windowsでは、コピー済みDLLの依存先を、コピー先、実行ファイルのディレクトリ、System32、明示的に登録した
+ディレクトリから探索します。追加の信頼済みディレクトリは、DLLをロードする前にWindowsローダーへ登録してください。
+
 ロード直後からホストの保持一覧に所有参照を保存するため、検査失敗や後続の unwind でもコードは残ります。
 `RequestTask`、登録処理、外部へ渡した Waker も実行世代への参照を保持します。
 SDKのホストI/Oには、要求終了後に無効化できるホスト所有の通知口を使います。
@@ -57,6 +60,7 @@ SDK は回収の安全性を自動判定する DLL 用終了フックや、世�
 | `CloseUncertain` | close が失敗した画像とコピーを保持し、消費したハンドルを再利用しない |
 | `RegisteredLocals { count }` | 登録した世代ローカル値の所有が終了し、破棄が戻るまで待つ。不確定な残留も数える |
 | `LocalCleanupFailed { count }` | 登録値の破棄に失敗した画像を保持する。同じ破棄関数は再実行しない |
+| `TaskCleanupFailed(error)` | SDKの要求Futureの破棄に失敗したか、ホストI/Oの後始末が未確認の画像を保持する |
 
 回収APIは SDK 側の条件が不足すると `ReclaimResult::Retained { reasons }` を返します。
 成功時は `Released { copy_removal_error }` で、ローダー参照の解放後にコピーを削除します。

@@ -75,7 +75,11 @@ fn child(dir: &Path, mode: &str) {
             "/foundation/support_dll"
         };
         let (copied, dll) = copied_manifest(&work, &v1, field);
-        let artifact = trusted(&copied);
+        let artifact = unsafe {
+            LayeredArtifact::read_in(&copied, dir)
+                .unwrap()
+                .into_trusted()
+        };
         // Change only a test-owned copy after provenance was accepted.
         let mut bytes = std::fs::read(&dll).unwrap();
         let end = bytes.len() - 1;

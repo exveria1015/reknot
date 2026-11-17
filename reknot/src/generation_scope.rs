@@ -92,7 +92,7 @@ impl GenerationScope {
 }
 impl Drop for GenerationScope {
     fn drop(&mut self) {
-        // Control holds only a Weak scope. At this point further access cannot
+        // Control holds only a Weak generation. At this point further access cannot
         // reinitialize values or build a scope -> local -> control ownership cycle.
         let mut values = std::mem::take(self.values.get_mut());
         for key in self.order.get_mut().drain(..).rev() {

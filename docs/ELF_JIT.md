@@ -27,8 +27,8 @@ python3 scripts/build-layered-elf.py \
 
 The builder publishes `logic.o.json` (schema 3) and content-addressed copies of
 the object, support and std. It captures compiler identity, target, codegen flags,
-resolved support features/profile and Cargo.lock hash, and checks the actual Cargo
-support artifact plus library bytes before/after logic compilation. Cooperating
+resolved support features/profile and Cargo.lock hash. The support artifact comes
+from the Cargo invocation that compiles logic. Cooperating
 builders serialize writes to the Cargo target directory. Cache limits report
 `CacheFull`; the builder never deletes another session's files.
 

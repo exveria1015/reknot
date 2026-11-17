@@ -8,6 +8,22 @@ use std::task::Wake;
 use std::task::Waker;
 use std::task::{Context, Poll};
 
+/// Run a callback on its own side of the ABI, including disposal of its panic
+/// payload. A custom payload can itself panic when dropped.
+pub(crate) fn catch_callback<T>(callback: impl FnOnce() -> T) -> Result<T, ()> {
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+    match catch_unwind(AssertUnwindSafe(callback)) {
+        Ok(value) => Ok(value),
+        Err(payload) => {
+            if let Err(payload) = catch_unwind(AssertUnwindSafe(|| drop(payload))) {
+                // Do not run another arbitrary destructor or unwind over FFI.
+                std::mem::forget(payload);
+            }
+            Err(())
+        }
+    }
+}
+
 /// Wrap arbitrary executor code before sending its callbacks across a C ABI.
 /// Clones only retain the Arc; notification and final Drop catch user panics.
 pub(crate) fn unwind_safe_waker(waker: &Waker) -> Waker {
@@ -17,15 +33,15 @@ pub(crate) fn unwind_safe_waker(waker: &Waker) -> Waker {
             self.wake_by_ref();
         }
         fn wake_by_ref(self: &Arc<Self>) {
-            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = catch_callback(|| {
                 self.0.as_ref().unwrap().wake_by_ref();
-            }));
+            });
         }
     }
     impl Drop for SafeWake {
         fn drop(&mut self) {
             let waker = self.0.take();
-            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(waker)));
+            let _ = catch_callback(|| drop(waker));
         }
     }
     Waker::from(Arc::new(SafeWake(Some(waker.clone()))))
@@ -43,15 +59,15 @@ pub unsafe fn poll_result_future(
     if host.is_null() {
         return crate::RunStatus::Error;
     }
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+    catch_callback(|| {
         let waker = waker_from_host(&*host);
         let mut cx = Context::from_waker(&waker);
         match future.as_mut().poll(&mut cx) {
             Poll::Pending => crate::RunStatus::Pending,
             Poll::Ready(status) => status,
         }
-    }));
-    result.unwrap_or(crate::RunStatus::Error)
+    })
+    .unwrap_or(crate::RunStatus::Error)
 }
 
 pub(crate) unsafe fn waker_from_host(host: &HostWaker) -> Waker {

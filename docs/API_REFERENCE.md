@@ -201,7 +201,10 @@ Share only the `ServiceClient` from `ThreadService::spawn` between host threads;
 Call `ServiceWorker::shutdown()` and await it to stop and join the I/O thread.
 See [async services and threads](ASYNC_SERVICES_AND_THREADS.md).
 A handler's `ServiceError` or caught unwind becomes `RunStatus::Error`; `RequestTask` currently does not expose the original detailed error.
-Destructor panics and `panic=abort` are outside recovery guarantees.
+SDK-generated request destructors catch unwinding panics on the logic side. On a host with
+the optional task-cleanup ABI, `RequestTask::activity_error()` reports `PANICKED` and the host
+retains the affected image. With an older SDK host, the logic keeps its code lease on failure.
+Rebuild the logic against the updated SDK to use this behavior with `panic=unwind`.
 
 ### Admission and execution
 
@@ -299,8 +302,10 @@ identity is the unsafe caller's responsibility; see the two-layer guide above.
 layered ownership contract using a Rust COFF/bigobj loader on Windows x64 MSVC,
 without LLVM. `CoffLimits` adds a committed-image budget, including BSS and padding.
 Unsupported inputs fail before execution; published code stays loaded.
-`LayeredArtifact::read(manifest)` captures size/hash-checked COFF bytes from a
-schema-2 manifest or ELF bytes from schema 3. `unsafe into_trusted()` accepts
+`LayeredArtifact::read(manifest)` captures size/hash-checked COFF or ELF bytes from a
+regular file in the manifest directory tree. With a separate cache it can read the
+producer's companion object beside the manifest. `read_in(manifest, root)` authorizes
+a specific directory tree for the declared object. `unsafe into_trusted()` accepts
 native-code and producer trust; then `LayeredEngine::open(&trusted, LayeredLimits)`
 and `load(trusted)` verify the resident foundation and reject mismatched logic.
 One verified foundation is allowed per process. Windows pins both DLL files;

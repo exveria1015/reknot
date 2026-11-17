@@ -172,11 +172,11 @@ pub(crate) unsafe fn load_prepared(prepared: PreparedLibrary) -> Result<LoadedHa
 }
 
 unsafe fn load_copy(copy: LibraryCopy) -> Result<LoadedHandler, RouteError> {
-    let library = Library::new(&copy.path)
+    let library = open_library(&copy.path)
         .inspect_err(|_| {
             crate::retention::open_failed();
         })
-        .map_err(|error| RouteError::Load(LoadError::LibLoading(error)))?;
+        .map_err(RouteError::Load)?;
     crate::retention::update(copy.id, |v| v.loaded = true);
     let id = copy.id;
     let library = Arc::new(LibraryImage {
@@ -198,6 +198,26 @@ unsafe fn load_copy(copy: LibraryCopy) -> Result<LoadedHandler, RouteError> {
         .get::<HandlerApiFn>(b"hot_handler_api")
         .map_err(|error| RouteError::Load(LoadError::LibLoading(error)))?;
     LoadedHandler::from_entry(*entry, image)
+}
+
+unsafe fn open_library(path: &Path) -> Result<Library, LoadError> {
+    #[cfg(windows)]
+    {
+        use libloading::os::windows::{
+            Library as WindowsLibrary, LOAD_LIBRARY_SEARCH_DEFAULT_DIRS,
+            LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR,
+        };
+        // The copied image, executable directory, System32 and explicitly
+        // registered loader directories are available for its dependencies.
+        let path = path.canonicalize()?;
+        let library = WindowsLibrary::load_with_flags(
+            path,
+            LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS,
+        )?;
+        Ok(library.into())
+    }
+    #[cfg(not(windows))]
+    Ok(Library::new(path)?)
 }
 
 /// Outcome of one explicit reclamation attempt. Copy deletion and native close
@@ -228,6 +248,9 @@ fn reasons(record: &ImageRecord, image: Option<&Arc<LibraryImage>>) -> Vec<Reten
         reasons.push(RetentionReason::LocalCleanupFailed {
             count: record.local_cleanup_failures,
         });
+    }
+    if let Some(error) = record.task_cleanup_failure {
+        reasons.push(RetentionReason::TaskCleanupFailed(error));
     }
     if record.reclaiming {
         reasons.push(RetentionReason::Reclaiming);

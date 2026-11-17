@@ -1,13 +1,13 @@
 use crate::activity::Entry;
 use crate::generation::{enter, CodeLease};
-use crate::generation_scope::GenerationScope;
 use crate::notification::WakeGate;
 use crate::{ActivityHandle, MAX_MANAGED_ACTIVITIES};
 use crate::{ServiceError, ServiceKey};
 use reknot_abi::services::{
     AccessGenerationLocalFn, HandlerHeader, HostTaskControl, HostTaskVTable,
-    HostTaskVTableCancellation, HostTaskVTableExt, MakeGenerationLocalFn, CANCELLATION_ABI_VERSION,
-    GENERATION_SERVICES_ABI_VERSION, TASK_CONTROL_ABI_VERSION,
+    HostTaskVTableCancellation, HostTaskVTableCleanup, HostTaskVTableExt, MakeGenerationLocalFn,
+    CANCELLATION_ABI_VERSION, GENERATION_SERVICES_ABI_VERSION, TASK_CLEANUP_ABI_VERSION,
+    TASK_CONTROL_ABI_VERSION,
 };
 use std::cell::{Cell, RefCell};
 use std::ffi::c_void;
@@ -40,7 +40,7 @@ pub(super) struct Control {
     polling: Cell<usize>,
     cancellation: crate::CancellationToken,
     lease: Option<CodeLease>,
-    scope: Weak<GenerationScope>,
+    generation: Weak<super::Generation>,
     pub(super) notification_gate: Arc<WakeGate>,
 }
 impl Control {
@@ -49,7 +49,7 @@ impl Control {
         checkpoint: Option<Checkpoint>,
         max_bytes: usize,
         lease: Option<CodeLease>,
-        scope: Weak<GenerationScope>,
+        generation: Weak<super::Generation>,
     ) -> Rc<Self> {
         Rc::new(Self {
             stop: Cell::new(false),
@@ -64,7 +64,7 @@ impl Control {
             polling: Cell::new(0),
             cancellation: crate::CancellationToken::default(),
             lease,
-            scope,
+            generation,
             notification_gate: Arc::new(WakeGate::default()),
         })
     }
@@ -175,8 +175,10 @@ unsafe extern "C" fn with_local(
     argument: *mut c_void,
 ) -> u32 {
     let control = &*data.cast::<Control>();
-    match control.scope.upgrade() {
-        Some(scope) => scope.with_local(key, make, init, access, argument),
+    match control.generation.upgrade() {
+        Some(generation) => generation
+            .scope
+            .with_local(key, make, init, access, argument),
         None => ServiceError::REVOKED.0,
     }
 }
@@ -214,6 +216,32 @@ unsafe extern "C" fn cancelled(data: *mut c_void) -> crate::TaskHandle {
         Ok(())
     }))
 }
+unsafe extern "C" fn cleanup_failed(data: *mut c_void, error: ServiceError) {
+    let control = &*data.cast::<Control>();
+    if control.failure.get().is_none() || error == ServiceError::ASYNC_CLEANUP_FAILED {
+        control.failure.set(Some(error));
+    }
+    control.stop.set(true);
+    if let Some(lease) = &control.lease {
+        lease.pin_task_cleanup_failure(error);
+    }
+    // Host I/O with unconfirmed cleanup stays owned by the activity. Wake a
+    // pending Restart so it can report the failure without waiting for join.
+    if error != ServiceError::ASYNC_CLEANUP_FAILED {
+        return;
+    }
+    let Some(generation) = control.generation.upgrade() else {
+        return;
+    };
+    if !generation.unconfirmed_cleanup.replace(true) {
+        let _ = crate::task::catch_callback(|| {
+            let wake = generation.completion.borrow().clone();
+            if let Some(wake) = wake {
+                wake.wake();
+            }
+        });
+    }
+}
 unsafe extern "C" fn checkpoint(
     data: *mut c_void,
     schema: ServiceKey,
@@ -235,29 +263,36 @@ unsafe extern "C" fn checkpoint(
     *control.checkpoint.borrow_mut() = Some(Checkpoint { schema, bytes });
     0
 }
-static VTABLE: HostTaskVTableCancellation = HostTaskVTableCancellation {
-    base: HostTaskVTableExt {
-        base: HostTaskVTable {
-            header: HandlerHeader {
-                abi_version: TASK_CONTROL_ABI_VERSION,
-                struct_size: std::mem::size_of::<HostTaskVTableCancellation>() as u32,
+static VTABLE: HostTaskVTableCleanup = HostTaskVTableCleanup {
+    base: HostTaskVTableCancellation {
+        base: HostTaskVTableExt {
+            base: HostTaskVTable {
+                header: HandlerHeader {
+                    abi_version: TASK_CONTROL_ABI_VERSION,
+                    struct_size: std::mem::size_of::<HostTaskVTableCleanup>() as u32,
+                },
+                retain,
+                release,
+                stop_requested: stopped,
+                checkpoint,
+                register_activity,
             },
-            retain,
-            release,
-            stop_requested: stopped,
-            checkpoint,
-            register_activity,
+            extension: HandlerHeader {
+                abi_version: GENERATION_SERVICES_ABI_VERSION,
+                struct_size: std::mem::size_of::<HostTaskVTableExt>() as u32,
+            },
+            notification,
+            with_local,
         },
-        extension: HandlerHeader {
-            abi_version: GENERATION_SERVICES_ABI_VERSION,
-            struct_size: std::mem::size_of::<HostTaskVTableExt>() as u32,
+        cancellation: HandlerHeader {
+            abi_version: CANCELLATION_ABI_VERSION,
+            struct_size: std::mem::size_of::<HostTaskVTableCancellation>() as u32,
         },
-        notification,
-        with_local,
+        cancelled,
     },
-    cancellation: HandlerHeader {
-        abi_version: CANCELLATION_ABI_VERSION,
-        struct_size: std::mem::size_of::<HostTaskVTableCancellation>() as u32,
+    cleanup: HandlerHeader {
+        abi_version: TASK_CLEANUP_ABI_VERSION,
+        struct_size: std::mem::size_of::<HostTaskVTableCleanup>() as u32,
     },
-    cancelled,
+    cleanup_failed,
 };

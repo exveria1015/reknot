@@ -35,6 +35,7 @@ pub enum RetentionReason {
     CloseUncertain,
     RegisteredLocals { count: usize },
     LocalCleanupFailed { count: u64 },
+    TaskCleanupFailed(crate::ServiceError),
 }
 #[derive(Clone, Debug)]
 pub struct ImageRecord {
@@ -54,6 +55,7 @@ pub struct ImageRecord {
     pub close_error: Option<String>,
     pub registered_locals: usize,
     pub local_cleanup_failures: u64,
+    pub(crate) task_cleanup_failure: Option<crate::ServiceError>,
     pub(crate) reclaiming: bool,
 }
 #[derive(Clone, Debug)]
@@ -144,6 +146,7 @@ pub(crate) fn copied(id: ArtifactId, source: PathBuf, copy: PathBuf, bytes: u64)
             close_error: None,
             registered_locals: 0,
             local_cleanup_failures: 0,
+            task_cleanup_failure: None,
             reclaiming: false,
         },
     );

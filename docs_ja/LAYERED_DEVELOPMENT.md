@@ -83,9 +83,9 @@ cargo run -p reknot --no-default-features --features jit-dev --bin reknot-build 
 
 再利用には`--foundation-manifest`、依存の選択には`--features`・`--no-default-features`を使います。
 `--help`でその他の設定を確認できます。ライブラリの`jit::builder::build(&BuildOptions)`も同じ処理です。
-Cargoの出力先をロックし、実際のsupport artifact・コンパイラー・lockfileを照合します。
-基盤・オブジェクトは内容ハッシュで保存し、既存の出力を上書きしません。Windowsでは基盤ファイルを
-読み取り共有で固定し、Linuxではビルド前後のバイト列を確認します。生成物はコードの信頼性の証明ではありません。
+Cargoの出力先をロックし、logicをコンパイルしたCargo呼び出しからsupportのprofile・featuresを取得します。
+基盤・オブジェクトは内容ハッシュで新規保存します。基盤を再利用するときは、実際に選ばれたsupportの
+ビルド情報とバイト列を前回のmanifestと照合します。
 
 ## 入力・土台・キャッシュ
 

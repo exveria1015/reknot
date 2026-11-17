@@ -216,7 +216,9 @@ For ordinary layered reloads, use `LayeredArtifact` and `LayeredEngine` instead 
 the raw path-based entry points. `LayeredArtifact::read` safely reads a bounded
 schema-2 COFF or schema-3 ELF manifest, validates the supported profile and
 captures the exact object bytes after checking size and SHA-256. Subsequent path replacement cannot change
-that captured object. Schema 1 is rejected rather than treated as verified.
+that captured object. The declared object must be a regular file inside the manifest's directory
+tree. When the producer's cache is elsewhere, keep the companion object beside the `.json` file
+or pass the authorized cache directory to `LayeredArtifact::read_in`.
 
 The following commands and file-pinning details describe Windows COFF. For
 Linux sealed snapshots and the Python builder, see the [ELF guide](ELF_JIT.md).
@@ -289,9 +291,10 @@ with PowerShell 7:
 Prepare Cargo.lock and cached dependencies first when using `-Offline`. The
 workspace's dev profile must use panic=unwind and lto=false. The builder fixes
 dynamic std, unwind tables and one logic codegen unit, and restores the caller's
-environment on exit. It resolves support through the logic dependency graph,
-builds it with the resolved features, and freezes the compiler's std DLL, support
-DLL and Cargo.lock while compiling logic. Environments with `RUSTC_WRAPPER` or
+environment on exit. It finds support through the logic dependency graph and
+captures the support artifact reported by the invocation that compiles logic.
+The compiler's std DLL and Cargo.lock are held while compiling. The support DLL
+is opened for read sharing after Cargo finishes. Environments with `RUSTC_WRAPPER` or
 `RUSTC_WORKSPACE_WRAPPER` set are rejected; trust local Cargo configuration too.
 It does not turn an ordinary SDK-linked crate into a layered one.
 
@@ -305,8 +308,8 @@ the fixture is not evidence of unchanged application throughput.
 
 The schema-2 sidecar points at immutable, hash-addressed copies under `foundation/`
 and `objects/` in `-CacheDirectory`, or beside the output when it is omitted.
-The convenience `.obj` is not the verified load
-source. A unique staging object prevents Cargo from certifying a stale output;
+The `.obj` beside the manifest can supply the same hash-checked bytes when the
+cache is outside the manifest directory tree. A unique staging object prevents Cargo from certifying a stale output;
 the manifest is published last. Existing copies remain available for old hosts.
 
 For subsequent logic edits, add `-FoundationManifest target/layered/logic.obj.json`

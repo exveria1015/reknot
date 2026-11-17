@@ -58,6 +58,10 @@ the call reports the required size and retains the completed result. It does not
 The ID is released after its terminal result is collected. Releasing a pending ID early requests stop and retains the operation.
 
 If polling a host Future panics, completion remains unconfirmed: the Future is retained and subsequent polls stay Pending.
+If a Future returns `Ready` and its destructor panics, the awaiting `ServiceCall` receives
+`ASYNC_CLEANUP_FAILED`. The operation keeps its slot and the request keeps its registered work.
+`RequestTask::activity_error()` reports the failure and Restart returns `RouteError::ActivityFailed`
+with admission paused. The affected native or JIT generation remains loaded.
 There is no general automatic recovery from this state. Limits apply to data retained by the SDK and queues;
 they do not bound separately allocated application memory or peak usage inside an I/O handler.
 
